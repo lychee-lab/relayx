@@ -129,6 +129,21 @@ scripts/uninstall.sh
 scripts/uninstall.sh --remove-config --remove-state
 ```
 
+macOS installer package:
+
+```bash
+scripts/package_macos_pkg.sh --version dev --arch arm64 --output-dir dist
+sudo installer -pkg dist/relayx-dev-darwin-arm64.pkg -target /
+```
+
+The `.pkg` installs `relayx` to `/usr/local/bin/relayx` and places a config
+template at `/usr/local/share/relayx/relayx.env.example`. Remove the package
+with `sudo /usr/local/share/relayx/uninstall.sh`. GitHub Actions builds macOS
+`.pkg` artifacts for both `amd64` and `arm64`; pushing a `v*` tag also attaches
+them to the GitHub Release. Unsigned packages are useful for internal testing.
+Public double-click distribution should use a Developer ID Installer certificate
+and Apple notarization.
+
 ## Quick Start
 
 Run locally without starting Codex:
@@ -346,6 +361,7 @@ Check install scripts:
 ```bash
 bash -n scripts/install.sh
 bash -n scripts/uninstall.sh
+bash -n scripts/package_macos_pkg.sh
 scripts/install.sh --dry-run
 ```
 
@@ -540,6 +556,19 @@ scripts/install.sh --dry-run
 scripts/uninstall.sh
 scripts/uninstall.sh --remove-config --remove-state
 ```
+
+macOS 安装包：
+
+```bash
+scripts/package_macos_pkg.sh --version dev --arch arm64 --output-dir dist
+sudo installer -pkg dist/relayx-dev-darwin-arm64.pkg -target /
+```
+
+`.pkg` 会把 `relayx` 安装到 `/usr/local/bin/relayx`，并把配置模板放到
+`/usr/local/share/relayx/relayx.env.example`。卸载时执行
+`sudo /usr/local/share/relayx/uninstall.sh`。GitHub Actions 会同时构建
+`amd64` 和 `arm64` 的 macOS `.pkg` 产物；推送 `v*` tag 时也会自动附加到
+GitHub Release。未签名安装包适合内部测试；如果要面向外部分发并支持更顺滑的双击安装，应使用 Developer ID Installer 证书并做 Apple notarization。
 
 ## 快速开始
 
@@ -757,6 +786,7 @@ go test ./internal/e2e
 ```bash
 bash -n scripts/install.sh
 bash -n scripts/uninstall.sh
+bash -n scripts/package_macos_pkg.sh
 scripts/install.sh --dry-run
 ```
 
