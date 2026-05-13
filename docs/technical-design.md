@@ -201,8 +201,8 @@ running -> stopped
 
 当前持久化设计：
 
-- `RELAYX_DB` 指向 JSON state snapshot，保存 task、thread、turn、approval 的可恢复状态。
-- `RELAYX_AUDIT_LOG` 指向 JSONL audit log，逐行记录用户输入、审批决策和关键控制动作。
+- `~/.relayx/state.json` 是默认 JSON state snapshot，保存 task、thread、turn、approval 的可恢复状态。
+- `~/.relayx/logs/audit.jsonl` 是默认 JSONL audit log，逐行记录用户输入、审批决策和关键控制动作。
 - `core.Snapshot` 与 `persist.FileStateStore` 是持久化边界，后续如果需要强事务和查询能力，可在该边界下替换为 SQLite。
 
 ## 9. 策略与安全
@@ -291,8 +291,8 @@ macOS 生产：
 
 - 打包单二进制。
 - 用 launchd 常驻。
-- `RELAYX_RUNTIME_DIR` 放 socket。
-- `RELAYX_DB` 放状态快照。
+- `~/.relayx/run` 放 socket 或运行时文件。
+- `~/.relayx/state.json` 放状态快照。
 
 Linux 生产：
 

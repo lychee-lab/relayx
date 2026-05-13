@@ -4,8 +4,11 @@ set -Eeuo pipefail
 APP_NAME="relayx"
 PREFIX="${PREFIX:-"$HOME/.local"}"
 BINDIR="${BINDIR:-"$PREFIX/bin"}"
-CONFIG_DIR="${CONFIG_DIR:-"$HOME/.config/$APP_NAME"}"
-STATE_DIR="${STATE_DIR:-"$HOME/.local/state/$APP_NAME"}"
+RELAYX_HOME="${RELAYX_HOME:-"$HOME/.relayx"}"
+CONFIG_FILE="${CONFIG_FILE:-"$RELAYX_HOME/config.tomL"}"
+RUN_DIR="$RELAYX_HOME/run"
+LOG_DIR="$RELAYX_HOME/logs"
+STATE_FILE="$RELAYX_HOME/state.json"
 
 REMOVE_CONFIG=0
 REMOVE_STATE=0
@@ -20,8 +23,8 @@ Usage:
 Environment overrides:
   PREFIX
   BINDIR
-  CONFIG_DIR
-  STATE_DIR
+  RELAYX_HOME
+  CONFIG_FILE
 EOF
 }
 
@@ -49,12 +52,14 @@ done
 rm -f "$BINDIR/$APP_NAME"
 
 if [ "$REMOVE_CONFIG" -eq 1 ]; then
-  rm -rf "$CONFIG_DIR"
+  rm -f "$CONFIG_FILE"
 fi
 
 if [ "$REMOVE_STATE" -eq 1 ]; then
-  rm -rf "$STATE_DIR"
+  rm -f "$STATE_FILE"
+  rm -rf "$RUN_DIR" "$LOG_DIR"
 fi
 
-printf 'Uninstalled %s from %s\n' "$APP_NAME" "$BINDIR"
+rmdir "$RELAYX_HOME" 2>/dev/null || true
 
+printf 'Uninstalled %s from %s\n' "$APP_NAME" "$BINDIR"

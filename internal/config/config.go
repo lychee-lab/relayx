@@ -1,11 +1,25 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/BurntSushi/toml"
+)
+
+const (
+	appDirName        = ".relayx"
+	configFileName    = "config.tomL"
+	defaultListenAddr = "127.0.0.1:8787"
+	defaultCodexBin   = "codex"
+	defaultCodexMode  = "disabled"
+	defaultFeishuURL  = "https://open.feishu.cn/open-apis"
 )
 
 type Config struct {
+	ConfigPath        string
 	ListenAddr        string
 	CodexBin          string
 	CodexMode         string
@@ -22,6 +36,7 @@ type Config struct {
 }
 
 type Summary struct {
+	ConfigPath       string   `json:"config_path"`
 	ListenAddr       string   `json:"listen_addr"`
 	CodexBin         string   `json:"codex_bin"`
 	CodexMode        string   `json:"codex_mode"`
@@ -33,26 +48,50 @@ type Summary struct {
 	FeishuConfigured bool     `json:"feishu_configured"`
 }
 
-func LoadFromEnv() Config {
-	return Config{
-		ListenAddr:        getenvCompat("RELAYX_LISTEN_ADDR", "CODEX_BABYSITTER_LISTEN_ADDR", "127.0.0.1:8787"),
-		CodexBin:          getenvCompat("RELAYX_CODEX_BIN", "CODEX_BABYSITTER_CODEX_BIN", "codex"),
-		CodexMode:         getenvCompat("RELAYX_CODEX_MODE", "CODEX_BABYSITTER_CODEX_MODE", "disabled"),
-		RuntimeDir:        getenvCompat("RELAYX_RUNTIME_DIR", "CODEX_BABYSITTER_RUNTIME_DIR", ".relayx/run"),
-		DBPath:            getenvCompat("RELAYX_DB", "CODEX_BABYSITTER_DB", ".relayx/state.json"),
-		AuditPath:         getenvCompat("RELAYX_AUDIT_LOG", "CODEX_BABYSITTER_AUDIT_LOG", ".relayx/audit.jsonl"),
-		AllowedRepos:      splitCSV(getenvCompat("RELAYX_ALLOWED_REPOS", "CODEX_BABYSITTER_ALLOWED_REPOS", "")),
-		AuthorizedUsers:   splitCSV(getenvCompat("RELAYX_AUTHORIZED_USERS", "CODEX_BABYSITTER_AUTHORIZED_USERS", "")),
-		FeishuAppID:       os.Getenv("FEISHU_APP_ID"),
-		FeishuAppSecret:   os.Getenv("FEISHU_APP_SECRET"),
-		FeishuBaseURL:     getenv("FEISHU_BASE_URL", "https://open.feishu.cn/open-apis"),
-		FeishuVerifyToken: os.Getenv("FEISHU_VERIFICATION_TOKEN"),
-		FeishuConfigured:  os.Getenv("FEISHU_APP_ID") != "" && os.Getenv("FEISHU_APP_SECRET") != "",
+type fileConfig struct {
+	ListenAddr      string   `toml:"listen_addr"`
+	CodexBin        string   `toml:"codex_bin"`
+	CodexMode       string   `toml:"codex_mode"`
+	RuntimeDir      string   `toml:"runtime_dir"`
+	DBPath          string   `toml:"db"`
+	AuditPath       string   `toml:"audit_log"`
+	AllowedRepos    []string `toml:"allowed_repos"`
+	AuthorizedUsers []string `toml:"authorized_users"`
+	Feishu          struct {
+		AppID             string `toml:"app_id"`
+		AppSecret         string `toml:"app_secret"`
+		BaseURL           string `toml:"base_url"`
+		VerificationToken string `toml:"verification_token"`
+	} `toml:"feishu"`
+}
+
+func Load() (Config, error) {
+	cfg, err := defaultConfig()
+	if err != nil {
+		return Config{}, err
 	}
+
+	if value := os.Getenv("RELAYX_CONFIG"); value != "" {
+		cfg.ConfigPath, err = expandPath(value)
+		if err != nil {
+			return Config{}, err
+		}
+	}
+
+	if err := applyConfigFile(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := applyEnv(&cfg); err != nil {
+		return Config{}, err
+	}
+	cfg.FeishuConfigured = cfg.FeishuAppID != "" && cfg.FeishuAppSecret != ""
+
+	return cfg, nil
 }
 
 func (c Config) Summary() Summary {
 	return Summary{
+		ConfigPath:       c.ConfigPath,
 		ListenAddr:       c.ListenAddr,
 		CodexBin:         c.CodexBin,
 		CodexMode:        c.CodexMode,
@@ -65,22 +104,175 @@ func (c Config) Summary() Summary {
 	}
 }
 
-func getenv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
+func defaultConfig() (Config, error) {
+	baseDir, err := defaultBaseDir()
+	if err != nil {
+		return Config{}, err
 	}
-	return value
+
+	return Config{
+		ConfigPath:    filepath.Join(baseDir, configFileName),
+		ListenAddr:    defaultListenAddr,
+		CodexBin:      defaultCodexBin,
+		CodexMode:     defaultCodexMode,
+		RuntimeDir:    filepath.Join(baseDir, "run"),
+		DBPath:        filepath.Join(baseDir, "state.json"),
+		AuditPath:     filepath.Join(baseDir, "logs", "audit.jsonl"),
+		FeishuBaseURL: defaultFeishuURL,
+	}, nil
 }
 
-func getenvCompat(primary, legacy, fallback string) string {
-	if value := os.Getenv(primary); value != "" {
-		return value
+func defaultBaseDir() (string, error) {
+	home, err := homeDir()
+	if err != nil {
+		return "", err
 	}
-	if value := os.Getenv(legacy); value != "" {
-		return value
+	return filepath.Join(home, appDirName), nil
+}
+
+func applyConfigFile(cfg *Config) error {
+	if cfg.ConfigPath == "" {
+		return nil
 	}
-	return fallback
+
+	var fc fileConfig
+	if _, err := toml.DecodeFile(cfg.ConfigPath, &fc); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("load config %s: %w", cfg.ConfigPath, err)
+	}
+
+	var err error
+	if fc.ListenAddr != "" {
+		cfg.ListenAddr = fc.ListenAddr
+	}
+	if fc.CodexBin != "" {
+		cfg.CodexBin = fc.CodexBin
+	}
+	if fc.CodexMode != "" {
+		cfg.CodexMode = fc.CodexMode
+	}
+	if fc.RuntimeDir != "" {
+		cfg.RuntimeDir, err = expandPath(fc.RuntimeDir)
+		if err != nil {
+			return err
+		}
+	}
+	if fc.DBPath != "" {
+		cfg.DBPath, err = expandPath(fc.DBPath)
+		if err != nil {
+			return err
+		}
+	}
+	if fc.AuditPath != "" {
+		cfg.AuditPath, err = expandPath(fc.AuditPath)
+		if err != nil {
+			return err
+		}
+	}
+	if fc.AllowedRepos != nil {
+		cfg.AllowedRepos = fc.AllowedRepos
+	}
+	if fc.AuthorizedUsers != nil {
+		cfg.AuthorizedUsers = fc.AuthorizedUsers
+	}
+	if fc.Feishu.AppID != "" {
+		cfg.FeishuAppID = fc.Feishu.AppID
+	}
+	if fc.Feishu.AppSecret != "" {
+		cfg.FeishuAppSecret = fc.Feishu.AppSecret
+	}
+	if fc.Feishu.BaseURL != "" {
+		cfg.FeishuBaseURL = fc.Feishu.BaseURL
+	}
+	if fc.Feishu.VerificationToken != "" {
+		cfg.FeishuVerifyToken = fc.Feishu.VerificationToken
+	}
+
+	return nil
+}
+
+func applyEnv(cfg *Config) error {
+	var err error
+	if value := os.Getenv("RELAYX_LISTEN_ADDR"); value != "" {
+		cfg.ListenAddr = value
+	}
+	if value := os.Getenv("RELAYX_CODEX_BIN"); value != "" {
+		cfg.CodexBin = value
+	}
+	if value := os.Getenv("RELAYX_CODEX_MODE"); value != "" {
+		cfg.CodexMode = value
+	}
+	if value := os.Getenv("RELAYX_RUNTIME_DIR"); value != "" {
+		cfg.RuntimeDir, err = expandPath(value)
+		if err != nil {
+			return err
+		}
+	}
+	if value := os.Getenv("RELAYX_DB"); value != "" {
+		cfg.DBPath, err = expandPath(value)
+		if err != nil {
+			return err
+		}
+	}
+	if value := os.Getenv("RELAYX_AUDIT_LOG"); value != "" {
+		cfg.AuditPath, err = expandPath(value)
+		if err != nil {
+			return err
+		}
+	}
+	if value := os.Getenv("RELAYX_ALLOWED_REPOS"); value != "" {
+		cfg.AllowedRepos = splitCSV(value)
+	}
+	if value := os.Getenv("RELAYX_AUTHORIZED_USERS"); value != "" {
+		cfg.AuthorizedUsers = splitCSV(value)
+	}
+	if value := os.Getenv("FEISHU_APP_ID"); value != "" {
+		cfg.FeishuAppID = value
+	}
+	if value := os.Getenv("FEISHU_APP_SECRET"); value != "" {
+		cfg.FeishuAppSecret = value
+	}
+	if value := os.Getenv("FEISHU_BASE_URL"); value != "" {
+		cfg.FeishuBaseURL = value
+	}
+	if value := os.Getenv("FEISHU_VERIFICATION_TOKEN"); value != "" {
+		cfg.FeishuVerifyToken = value
+	}
+	return nil
+}
+
+func expandPath(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if value == "~" {
+		home, err := homeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand path %q: %w", value, err)
+		}
+		return home, nil
+	}
+	if strings.HasPrefix(value, "~/") || strings.HasPrefix(value, `~\`) {
+		home, err := homeDir()
+		if err != nil {
+			return "", fmt.Errorf("expand path %q: %w", value, err)
+		}
+		return filepath.Join(home, value[2:]), nil
+	}
+	return value, nil
+}
+
+func homeDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	if home == "" {
+		return "", fmt.Errorf("resolve home directory: empty home")
+	}
+	return home, nil
 }
 
 func splitCSV(value string) []string {

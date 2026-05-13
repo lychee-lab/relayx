@@ -102,15 +102,17 @@ The installer:
 - Installs Codex CLI first on macOS when Homebrew is present and Codex is missing.
 - Builds `relayx`.
 - Installs the binary to the default user program directory.
-- Writes a config template.
-- Creates the default state directory.
+- Writes a TOML config template.
+- Creates the default runtime and log directories.
 
 Default locations:
 
 ```text
 Binary:  $HOME/.local/bin/relayx
-Config:  $HOME/.config/relayx/relayx.env
-State:   $HOME/.local/state/relayx
+Config:  $HOME/.relayx/config.tomL
+Runtime: $HOME/.relayx/run
+State:   $HOME/.relayx/state.json
+Logs:    $HOME/.relayx/logs
 ```
 
 Useful overrides:
@@ -137,7 +139,7 @@ sudo installer -pkg dist/relayx-dev-darwin-arm64.pkg -target /
 ```
 
 The `.pkg` installs `relayx` to `/usr/local/bin/relayx` and places a config
-template at `/usr/local/share/relayx/relayx.env.example`. Remove the package
+template at `/usr/local/share/relayx/config.tomL.example`. Remove the package
 with `sudo /usr/local/share/relayx/uninstall.sh`. GitHub Actions builds macOS
 `.pkg` artifacts for both `amd64` and `arm64`; pushing a `v*` tag also attaches
 them to the GitHub Release. Unsigned packages are useful for internal testing.
@@ -170,17 +172,27 @@ RELAYX_CODEX_MODE=app-server go run ./cmd/relayx serve
 
 ## Configuration
 
-RelayX is configured through environment variables.
+RelayX is configured through `~/.relayx/config.tomL`. Environment variables can
+still override config file values for temporary runs, CI, or secret injection.
 
-Core settings:
+Default config:
 
-```bash
-RELAYX_LISTEN_ADDR=127.0.0.1:8787
-RELAYX_CODEX_MODE=disabled
-RELAYX_CODEX_BIN=codex
-RELAYX_RUNTIME_DIR=.relayx/run
-RELAYX_DB=.relayx/state.json
-RELAYX_AUDIT_LOG=.relayx/audit.jsonl
+```toml
+listen_addr = "127.0.0.1:8787"
+codex_mode = "disabled"
+codex_bin = "codex"
+runtime_dir = "~/.relayx/run"
+db = "~/.relayx/state.json"
+audit_log = "~/.relayx/logs/audit.jsonl"
+
+authorized_users = []
+allowed_repos = []
+
+[feishu]
+app_id = ""
+app_secret = ""
+base_url = "https://open.feishu.cn/open-apis"
+verification_token = ""
 ```
 
 Codex mode:
@@ -190,29 +202,25 @@ disabled    Do not start Codex. Useful for local HTTP/dev testing.
 app-server  Start `codex app-server --listen stdio://` and drive it via JSON-RPC.
 ```
 
-Safety controls:
+Useful environment overrides:
 
 ```bash
+RELAYX_CONFIG=/path/to/config.tomL
+RELAYX_LISTEN_ADDR=127.0.0.1:8787
+RELAYX_CODEX_MODE=app-server
+RELAYX_CODEX_BIN=codex
+RELAYX_RUNTIME_DIR=~/.relayx/run
+RELAYX_DB=~/.relayx/state.json
+RELAYX_AUDIT_LOG=~/.relayx/logs/audit.jsonl
 RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
 RELAYX_ALLOWED_REPOS=/Users/me/project-a,/Users/me/project-b
-```
-
-Required Feishu settings:
-
-```bash
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
-```
-
-Optional Feishu settings:
-
-```bash
 FEISHU_VERIFICATION_TOKEN=xxx
 FEISHU_BASE_URL=https://open.feishu.cn/open-apis
 ```
 
-Legacy `CODEX_BABYSITTER_*` environment variables are still accepted as fallback
-while migrating existing local configs to `RELAYX_*`.
+Legacy `CODEX_BABYSITTER_*` environment variables are no longer read.
 
 ## Feishu Setup
 
@@ -338,8 +346,8 @@ Feishu.
 RelayX writes local state and audit logs:
 
 ```text
-RELAYX_DB         JSON snapshot of tasks and approvals.
-RELAYX_AUDIT_LOG  JSONL audit trail of user actions and approval decisions.
+~/.relayx/state.json         JSON snapshot of tasks and approvals.
+~/.relayx/logs/audit.jsonl   JSONL audit trail of user actions and approval decisions.
 ```
 
 The current persistence implementation is file-backed. The code keeps persistence
@@ -537,15 +545,17 @@ scripts/install.sh
 - 在 macOS 且存在 Homebrew、但缺少 Codex 时，先安装 Codex CLI。
 - 构建 `relayx`。
 - 将二进制安装到默认用户程序目录。
-- 写入配置模板。
-- 创建默认状态目录。
+- 写入 TOML 配置模板。
+- 创建默认运行时和日志目录。
 
 默认位置：
 
 ```text
 Binary:  $HOME/.local/bin/relayx
-Config:  $HOME/.config/relayx/relayx.env
-State:   $HOME/.local/state/relayx
+Config:  $HOME/.relayx/config.tomL
+Runtime: $HOME/.relayx/run
+State:   $HOME/.relayx/state.json
+Logs:    $HOME/.relayx/logs
 ```
 
 常用覆盖参数：
@@ -572,7 +582,7 @@ sudo installer -pkg dist/relayx-dev-darwin-arm64.pkg -target /
 ```
 
 `.pkg` 会把 `relayx` 安装到 `/usr/local/bin/relayx`，并把配置模板放到
-`/usr/local/share/relayx/relayx.env.example`。卸载时执行
+`/usr/local/share/relayx/config.tomL.example`。卸载时执行
 `sudo /usr/local/share/relayx/uninstall.sh`。GitHub Actions 会同时构建
 `amd64` 和 `arm64` 的 macOS `.pkg` 产物；推送 `v*` tag 时也会自动附加到
 GitHub Release。未签名安装包适合内部测试；如果要面向外部分发并支持更顺滑的双击安装，应使用 Developer ID Installer 证书并做 Apple notarization。
@@ -603,17 +613,26 @@ RELAYX_CODEX_MODE=app-server go run ./cmd/relayx serve
 
 ## 配置
 
-RelayX 通过环境变量进行配置。
+RelayX 通过 `~/.relayx/config.tomL` 进行配置。环境变量仍可用于临时运行、CI 或敏感信息注入，并且优先级高于配置文件。
 
-核心配置：
+默认配置：
 
-```bash
-RELAYX_LISTEN_ADDR=127.0.0.1:8787
-RELAYX_CODEX_MODE=disabled
-RELAYX_CODEX_BIN=codex
-RELAYX_RUNTIME_DIR=.relayx/run
-RELAYX_DB=.relayx/state.json
-RELAYX_AUDIT_LOG=.relayx/audit.jsonl
+```toml
+listen_addr = "127.0.0.1:8787"
+codex_mode = "disabled"
+codex_bin = "codex"
+runtime_dir = "~/.relayx/run"
+db = "~/.relayx/state.json"
+audit_log = "~/.relayx/logs/audit.jsonl"
+
+authorized_users = []
+allowed_repos = []
+
+[feishu]
+app_id = ""
+app_secret = ""
+base_url = "https://open.feishu.cn/open-apis"
+verification_token = ""
 ```
 
 Codex 模式：
@@ -627,28 +646,25 @@ app-server  Start `codex app-server --listen stdio://` and drive it via JSON-RPC
 
 `app-server` 模式会启动 `codex app-server --listen stdio://`，并通过 JSON-RPC 驱动它。
 
-安全控制：
+常用环境变量覆盖：
 
 ```bash
+RELAYX_CONFIG=/path/to/config.tomL
+RELAYX_LISTEN_ADDR=127.0.0.1:8787
+RELAYX_CODEX_MODE=app-server
+RELAYX_CODEX_BIN=codex
+RELAYX_RUNTIME_DIR=~/.relayx/run
+RELAYX_DB=~/.relayx/state.json
+RELAYX_AUDIT_LOG=~/.relayx/logs/audit.jsonl
 RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
 RELAYX_ALLOWED_REPOS=/Users/me/project-a,/Users/me/project-b
-```
-
-飞书必填配置：
-
-```bash
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
-```
-
-飞书可选配置：
-
-```bash
 FEISHU_VERIFICATION_TOKEN=xxx
 FEISHU_BASE_URL=https://open.feishu.cn/open-apis
 ```
 
-迁移现有本地配置时，旧的 `CODEX_BABYSITTER_*` 环境变量仍会作为 fallback 被兼容读取。
+旧的 `CODEX_BABYSITTER_*` 环境变量不再读取。
 
 ## 飞书接入
 
@@ -768,13 +784,13 @@ danger-full-access
 RelayX 会写入本地状态和审计日志：
 
 ```text
-RELAYX_DB         JSON snapshot of tasks and approvals.
-RELAYX_AUDIT_LOG  JSONL audit trail of user actions and approval decisions.
+~/.relayx/state.json         JSON snapshot of tasks and approvals.
+~/.relayx/logs/audit.jsonl   JSONL audit trail of user actions and approval decisions.
 ```
 
-`RELAYX_DB` 保存任务和审批的 JSON 快照。
+`~/.relayx/state.json` 保存任务和审批的 JSON 快照。
 
-`RELAYX_AUDIT_LOG` 保存用户操作和审批决策的 JSONL 审计记录。
+`~/.relayx/logs/audit.jsonl` 保存用户操作和审批决策的 JSONL 审计记录。
 
 当前持久化实现是文件型实现。代码通过 `core.Snapshot` 和 `persist.FileStateStore` 隔离持久化边界，因此后续可以在不改变 app service 边界的情况下增加 SQLite 存储。
 

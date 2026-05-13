@@ -33,10 +33,12 @@ func run(args []string) error {
 		return usage()
 	}
 
-	cfg := config.LoadFromEnv()
-
 	switch args[0] {
 	case "check":
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
 		return printJSON(cfg.Summary())
 	case "parse":
 		if len(args) < 2 {
@@ -48,6 +50,10 @@ func run(args []string) error {
 		}
 		return printJSON(cmd)
 	case "serve":
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
 		return serve(cfg)
 	case "help", "-h", "--help":
 		return usage()

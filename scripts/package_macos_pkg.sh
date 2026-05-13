@@ -22,7 +22,7 @@ The package installs:
   /usr/local/bin/relayx
   /usr/local/share/relayx/README.md
   /usr/local/share/relayx/LICENSE
-  /usr/local/share/relayx/relayx.env.example
+  /usr/local/share/relayx/config.tomL.example
   /usr/local/share/relayx/install-from-source.sh
   /usr/local/share/relayx/uninstall.sh
 EOF
@@ -161,29 +161,29 @@ printf 'Uninstalled %s from /usr/local/bin\\n' "$APP_NAME"
 EOF
 chmod 0755 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/uninstall.sh"
 
-cat >"$PAYLOAD_DIR/usr/local/share/$APP_NAME/relayx.env.example" <<'EOF'
+cat >"$PAYLOAD_DIR/usr/local/share/$APP_NAME/config.tomL.example" <<'EOF'
 # relayx runtime configuration.
 # Copy this file to a user-owned location before editing, for example:
-#   cp /usr/local/share/relayx/relayx.env.example ~/.config/relayx/relayx.env
+#   mkdir -p ~/.relayx
+#   cp /usr/local/share/relayx/config.tomL.example ~/.relayx/config.tomL
 
-RELAYX_LISTEN_ADDR=127.0.0.1:8787
-RELAYX_CODEX_MODE=disabled
-RELAYX_CODEX_BIN=codex
-RELAYX_DB=$HOME/.local/state/relayx/state.json
-RELAYX_AUDIT_LOG=$HOME/.local/state/relayx/audit.jsonl
+listen_addr = "127.0.0.1:8787"
+codex_mode = "disabled"
+codex_bin = "codex"
+runtime_dir = "~/.relayx/run"
+db = "~/.relayx/state.json"
+audit_log = "~/.relayx/logs/audit.jsonl"
 
-# Optional safety controls:
-# RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
-# RELAYX_ALLOWED_REPOS=/path/to/repo-a,/path/to/repo-b
+authorized_users = []
+allowed_repos = []
 
-# Feishu OpenAPI settings:
-# FEISHU_APP_ID=cli_xxx
-# FEISHU_APP_SECRET=xxx
-
-# Optional callback verification:
-# FEISHU_VERIFICATION_TOKEN=xxx
+[feishu]
+app_id = ""
+app_secret = ""
+base_url = "https://open.feishu.cn/open-apis"
+verification_token = ""
 EOF
-chmod 0644 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/relayx.env.example"
+chmod 0644 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/config.tomL.example"
 
 cat >"$SCRIPTS_DIR/postinstall" <<'EOF'
 #!/bin/bash
@@ -195,12 +195,15 @@ cat <<'MSG'
 relayx has been installed to /usr/local/bin/relayx.
 
 Runtime config template:
-  /usr/local/share/relayx/relayx.env.example
+  /usr/local/share/relayx/config.tomL.example
+
+Default user config path:
+  ~/.relayx/config.tomL
 
 Uninstall:
   sudo /usr/local/share/relayx/uninstall.sh
 
-Codex CLI is required when RELAYX_CODEX_MODE=app-server.
+Codex CLI is required when codex_mode = "app-server".
 If codex is missing, install it before starting relayx.
 MSG
 

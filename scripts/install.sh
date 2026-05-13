@@ -17,8 +17,8 @@ Usage:
 Environment overrides:
   PREFIX              Install prefix. Defaults to $HOME/.local.
   BINDIR              Binary install directory. Defaults to $PREFIX/bin.
-  CONFIG_DIR          Config directory. Defaults to $HOME/.config/relayx.
-  STATE_DIR           State directory. Defaults to $HOME/.local/state/relayx.
+  RELAYX_HOME         RelayX config and runtime directory. Defaults to $HOME/.relayx.
+  CONFIG_FILE         Config file path. Defaults to $RELAYX_HOME/config.tomL.
   CODEX_INSTALL_CMD   Command used when codex is missing.
 
 Default behavior:
@@ -26,7 +26,8 @@ Default behavior:
   - On macOS with Homebrew, the default Codex install command is:
       brew install --cask codex
   - Build this Go app and install the binary to $BINDIR/relayx.
-  - Write an env template to $CONFIG_DIR/relayx.env.
+  - Write a TOML config template to $RELAYX_HOME/config.tomL.
+  - Create $RELAYX_HOME/run and $RELAYX_HOME/logs.
 EOF
 }
 
@@ -74,11 +75,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 PREFIX="${PREFIX:-"$HOME/.local"}"
 BINDIR="${BINDIR:-"$PREFIX/bin"}"
-CONFIG_DIR="${CONFIG_DIR:-"$HOME/.config/$APP_NAME"}"
-STATE_DIR="${STATE_DIR:-"$HOME/.local/state/$APP_NAME"}"
-STATE_FILE="$STATE_DIR/state.json"
-AUDIT_FILE="$STATE_DIR/audit.jsonl"
-ENV_FILE="$CONFIG_DIR/$APP_NAME.env"
+RELAYX_HOME="${RELAYX_HOME:-"$HOME/.relayx"}"
+CONFIG_FILE="${CONFIG_FILE:-"$RELAYX_HOME/config.tomL"}"
+RUN_DIR="$RELAYX_HOME/run"
+LOG_DIR="$RELAYX_HOME/logs"
+STATE_FILE="$RELAYX_HOME/state.json"
+AUDIT_FILE="$LOG_DIR/audit.jsonl"
 BUILD_DIR="$REPO_ROOT/.build"
 BUILD_BIN="$BUILD_DIR/$APP_NAME"
 INSTALL_BIN="$BINDIR/$APP_NAME"
@@ -147,41 +149,39 @@ install_app() {
 }
 
 write_default_config() {
-  log "writing config template to $ENV_FILE"
-  run mkdir -p "$CONFIG_DIR" "$STATE_DIR"
+  log "writing config template to $CONFIG_FILE"
+  run mkdir -p "$(dirname "$CONFIG_FILE")" "$RUN_DIR" "$LOG_DIR"
 
   if [ "$DRY_RUN" -eq 1 ]; then
-    printf '[dry-run] write %q\n' "$ENV_FILE"
+    printf '[dry-run] write %q\n' "$CONFIG_FILE"
     return 0
   fi
 
-  if [ -f "$ENV_FILE" ]; then
+  if [ -f "$CONFIG_FILE" ]; then
     log "config exists; leaving unchanged"
     return 0
   fi
 
-  cat >"$ENV_FILE" <<EOF
+  cat >"$CONFIG_FILE" <<EOF
 # relayx runtime configuration.
-# Fill Feishu values before enabling Feishu callbacks in production.
 
-RELAYX_LISTEN_ADDR=$DEFAULT_LISTEN_ADDR
-RELAYX_CODEX_MODE=disabled
-RELAYX_CODEX_BIN=codex
-RELAYX_DB=$STATE_FILE
-RELAYX_AUDIT_LOG=$AUDIT_FILE
+listen_addr = "$DEFAULT_LISTEN_ADDR"
+codex_mode = "disabled"
+codex_bin = "codex"
+runtime_dir = "$RUN_DIR"
+db = "$STATE_FILE"
+audit_log = "$AUDIT_FILE"
 
-# Optional safety controls:
-# RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
-# RELAYX_ALLOWED_REPOS=/path/to/repo-a,/path/to/repo-b
+authorized_users = []
+allowed_repos = []
 
-# Feishu OpenAPI settings:
-# FEISHU_APP_ID=cli_xxx
-# FEISHU_APP_SECRET=xxx
-
-# Optional callback verification:
-# FEISHU_VERIFICATION_TOKEN=xxx
+[feishu]
+app_id = ""
+app_secret = ""
+base_url = "https://open.feishu.cn/open-apis"
+verification_token = ""
 EOF
-  chmod 0600 "$ENV_FILE"
+  chmod 0600 "$CONFIG_FILE"
 }
 
 print_next_steps() {
@@ -192,19 +192,20 @@ Installed $APP_NAME.
 Binary:
   $INSTALL_BIN
 
-Config template:
-  $ENV_FILE
+Config:
+  $CONFIG_FILE
 
-State directory:
-  $STATE_DIR
+Runtime directory:
+  $RUN_DIR
+
+Log directory:
+  $LOG_DIR
 
 Next steps:
   1. Ensure $BINDIR is on PATH.
-  2. Edit $ENV_FILE with Feishu credentials and safety controls.
+  2. Edit $CONFIG_FILE with Feishu credentials and safety controls.
   3. Run:
-       set -a
-       . "$ENV_FILE"
-       set +a
+       $INSTALL_BIN check
        $INSTALL_BIN serve
 EOF
 }
