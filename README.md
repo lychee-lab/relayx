@@ -29,7 +29,7 @@ RelayX currently includes:
 - Go CLI binary: `relayx`.
 - Local HTTP API for development and Feishu callbacks.
 - Codex app-server stdio JSON-RPC adapter.
-- Feishu OpenAPI client for text messages and interactive approval cards.
+- Feishu OpenAPI client for text messages, Markdown result cards, and interactive approval cards.
 - Feishu long-connection receiver for bot messages and card actions.
 - Feishu HTTP callback handler for optional callback mode and URL verification.
 - `/codex` command parser.
@@ -270,7 +270,7 @@ User sends /codex start ...
   -> Feishu sends im.message.receive_v1
   -> RelayX receives it through long connection and starts or updates a task
   -> Codex emits events or approval requests
-  -> RelayX sends Feishu text messages or interactive approval cards
+  -> RelayX sends Feishu Markdown result cards, text status messages, or interactive approval cards
   -> User clicks approve/deny
   -> Feishu sends card.action.trigger
   -> RelayX responds to Codex
@@ -317,6 +317,11 @@ Implemented Codex operations:
 - legacy exec approval response
 - basic event handling for task state updates
 
+When a Codex turn completes, RelayX extracts the final `agentMessage.text` from
+the Codex event payload. The content remains Codex's raw Markdown-like text, and
+RelayX sends it to Feishu as an interactive Markdown card. If the Markdown card
+send fails, RelayX falls back to a plain text message so the result is not lost.
+
 RelayX maps Codex approval requests into Feishu cards. Approval decisions are
 mapped back into the Codex protocol:
 
@@ -339,7 +344,7 @@ Default safety properties:
 - User allowlist can restrict who can control RelayX.
 - Repo allowlist can restrict which paths can be used.
 - Approval cards include only summaries.
-- Outbound messages are passed through secret redaction.
+- Outbound messages and Markdown cards are passed through secret redaction.
 - State is local.
 - Audit log is local JSONL.
 
@@ -502,7 +507,7 @@ RelayX 当前已经包含：
 - Go CLI 二进制：`relayx`。
 - 用于开发调试和飞书回调的本地 HTTP API。
 - Codex app-server 的 stdio JSON-RPC 适配器。
-- 用于文本消息和交互式审批卡片的飞书 OpenAPI 客户端。
+- 用于文本消息、Markdown 结果卡片和交互式审批卡片的飞书 OpenAPI 客户端。
 - 用于接收机器人消息和卡片操作的飞书长连接接收器。
 - 用于可选 HTTP callback 模式和 URL verification 的飞书 HTTP 回调处理器。
 - `/codex` 指令解析器。
@@ -733,7 +738,7 @@ User sends /codex start ...
   -> Feishu sends im.message.receive_v1
   -> RelayX receives it through long connection and starts or updates a task
   -> Codex emits events or approval requests
-  -> RelayX sends Feishu text messages or interactive approval cards
+  -> RelayX sends Feishu Markdown result cards, text status messages, or interactive approval cards
   -> User clicks approve/deny
   -> Feishu sends card.action.trigger
   -> RelayX responds to Codex
@@ -778,6 +783,11 @@ RelayX 通过 stdio JSON-RPC 使用 Codex app-server。
 - 旧版 exec 审批响应。
 - 用于任务状态更新的基础事件处理。
 
+当 Codex turn 完成时，RelayX 会从 Codex 事件载荷中提取最终的
+`agentMessage.text`。这部分内容保留为 Codex 输出的 Markdown 风格原始文本，
+RelayX 会优先用飞书 interactive Markdown 卡片发送；如果 Markdown 卡片发送失败，
+会自动降级为普通文本消息，避免结果丢失。
+
 RelayX 会将 Codex 审批请求映射为飞书卡片。审批决策会映射回 Codex 协议：
 
 ```text
@@ -799,7 +809,7 @@ RelayX 默认按保守原则设计。
 - 用户白名单可以限制谁能控制 RelayX。
 - 仓库白名单可以限制可使用的路径。
 - 审批卡片只包含摘要。
-- 外发消息会经过敏感信息脱敏。
+- 外发消息和 Markdown 结果卡片都会经过敏感信息脱敏。
 - 状态保存在本地。
 - 审计日志是本地 JSONL 文件。
 

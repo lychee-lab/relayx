@@ -137,6 +137,8 @@ codex app-server
 
 - 获取 `tenant_access_token`。
 - 调用 `/im/v1/messages` 发送文本、富文本或交互卡片。
+- Codex turn 完成后，从 `turn/completed` 事件里的最终 `agentMessage.text` 提取原始 Markdown 风格结果，并优先发送为飞书 interactive Markdown 卡片。
+- Markdown 结果卡片发送失败时降级为普通文本消息，避免任务结果丢失。
 - 审批请求用交互卡片。
 - 长日志只发摘要，完整内容保存在本地。
 
@@ -329,7 +331,7 @@ M2：Codex app-server adapter。
 M3：飞书发送消息。
 
 - tenant token 管理。
-- 文本消息和交互卡片。
+- 文本消息、Markdown 结果卡片和交互卡片。
 - 本地事件转飞书通知。
 - 状态：已完成 OpenAPI client。
 
