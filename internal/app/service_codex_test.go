@@ -107,14 +107,27 @@ func (f *fakeCodexAdapter) Close() error {
 type fakeNotifier struct {
 	mu        sync.Mutex
 	messages  []string
+	markdown  []markdownMessage
 	approvals []core.Approval
 	resumes   [][]core.ResumeOption
+}
+
+type markdownMessage struct {
+	title string
+	text  string
 }
 
 func (f *fakeNotifier) SendMessage(_ context.Context, _ string, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.messages = append(f.messages, text)
+	return nil
+}
+
+func (f *fakeNotifier) SendMarkdown(_ context.Context, _ string, title string, markdown string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markdown = append(f.markdown, markdownMessage{title: title, text: markdown})
 	return nil
 }
 
@@ -219,14 +232,14 @@ func TestServiceHandlesCodexCompletionEvent(t *testing.T) {
 	waitFor(t, func() bool {
 		notifier.mu.Lock()
 		defer notifier.mu.Unlock()
-		return len(notifier.messages) == 1
+		return len(notifier.markdown) == 1
 	})
 
 	notifier.mu.Lock()
-	message := notifier.messages[0]
+	message := notifier.markdown[0]
 	notifier.mu.Unlock()
-	if message != "Codex task task-000001 completed: done" {
-		t.Fatalf("message = %q", message)
+	if message.title != "Codex task task-000001 completed" || message.text != "done" {
+		t.Fatalf("message = %#v", message)
 	}
 }
 

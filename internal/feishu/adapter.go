@@ -37,6 +37,12 @@ type ResumeCard struct {
 	Options []core.ResumeOption
 }
 
+type MarkdownCard struct {
+	ChatID   string
+	Title    string
+	Markdown string
+}
+
 type Adapter interface {
 	Start(ctx context.Context) error
 	Messages() <-chan InboundMessage

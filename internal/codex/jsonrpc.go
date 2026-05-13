@@ -522,8 +522,37 @@ func eventFromNotification(method string, params map[string]any) Event {
 	}
 	if msg := stringValue(params, "message"); msg != "" {
 		event.Message = msg
+	} else if msg := lastAgentMessageFromCompletedTurn(params); msg != "" {
+		event.Message = msg
+	} else if msg := agentMessageFromItem(params["item"]); msg != "" {
+		event.Message = msg
 	}
 	return event
+}
+
+func lastAgentMessageFromCompletedTurn(params map[string]any) string {
+	turn, ok := params["turn"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	items, ok := turn["items"].([]any)
+	if !ok {
+		return ""
+	}
+	for i := len(items) - 1; i >= 0; i-- {
+		if msg := agentMessageFromItem(items[i]); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+func agentMessageFromItem(value any) string {
+	item, ok := value.(map[string]any)
+	if !ok || stringValue(item, "type") != "agentMessage" {
+		return ""
+	}
+	return stringValue(item, "text")
 }
 
 func approvalResult(method string, decision ApprovalDecision) any {
