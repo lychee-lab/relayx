@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lychee-lab/relayx/internal/codex"
@@ -294,6 +295,9 @@ func (s *Service) handleCodexEvent(ctx context.Context, event codex.Event) {
 	if event.ThreadID == "" {
 		return
 	}
+	if isNoisyCodexEvent(event.Kind) {
+		return
+	}
 
 	status := core.TaskRunning
 	errText := ""
@@ -311,8 +315,37 @@ func (s *Service) handleCodexEvent(ctx context.Context, event codex.Event) {
 		return
 	}
 	_ = s.persist(ctx)
+	message := codexEventNotification(task.ID, status, event)
+	if message == "" {
+		return
+	}
+	_ = s.notifier.SendMessage(ctx, task.ChatID, message)
+}
+
+func isNoisyCodexEvent(kind string) bool {
+	return strings.HasSuffix(kind, "/delta") || strings.Contains(kind, ".delta")
+}
+
+func codexEventNotification(taskID string, status core.TaskStatus, event codex.Event) string {
 	message := core.RedactSecrets(event.Message)
-	_ = s.notifier.SendMessage(ctx, task.ChatID, fmt.Sprintf("Codex event for %s: %s", task.ID, message))
+	if message == "" || message == event.Kind {
+		message = ""
+	}
+
+	switch status {
+	case core.TaskCompleted:
+		if message != "" {
+			return fmt.Sprintf("Codex task %s completed: %s", taskID, message)
+		}
+		return fmt.Sprintf("Codex task %s completed.", taskID)
+	case core.TaskFailed:
+		if message != "" {
+			return fmt.Sprintf("Codex task %s failed: %s", taskID, message)
+		}
+		return fmt.Sprintf("Codex task %s failed: %s", taskID, event.Kind)
+	default:
+		return ""
+	}
 }
 
 func (s *Service) handleCodexApproval(ctx context.Context, req codex.ApprovalRequest) {

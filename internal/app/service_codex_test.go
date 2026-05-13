@@ -167,6 +167,88 @@ func TestServiceHandlesCodexCompletionEvent(t *testing.T) {
 		task, ok := service.TaskByID(reply.Task.ID)
 		return ok && task.Status == core.TaskCompleted
 	})
+	waitFor(t, func() bool {
+		notifier.mu.Lock()
+		defer notifier.mu.Unlock()
+		return len(notifier.messages) == 1
+	})
+
+	notifier.mu.Lock()
+	message := notifier.messages[0]
+	notifier.mu.Unlock()
+	if message != "Codex task task-000001 completed: done" {
+		t.Fatalf("message = %q", message)
+	}
+}
+
+func TestServiceSuppressesNoisyCodexDeltaEvent(t *testing.T) {
+	fakeCodex := newFakeCodexAdapter()
+	notifier := &fakeNotifier{}
+	service := NewService(core.NewTaskManager(), WithCodex(fakeCodex), WithNotifier(notifier))
+
+	ctx := context.Background()
+	reply, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/codex start repo=/tmp/demo fix bug",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service.handleCodexEvent(ctx, codex.Event{
+		ThreadID: "thread-1",
+		Kind:     "item/agentMessage/delta",
+		Message:  "item/agentMessage/delta",
+	})
+
+	task, ok := service.TaskByID(reply.Task.ID)
+	if !ok {
+		t.Fatalf("task %q not found", reply.Task.ID)
+	}
+	if task.Status != core.TaskRunning || task.LastEvent != "" {
+		t.Fatalf("task = %#v", task)
+	}
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	if len(notifier.messages) != 0 {
+		t.Fatalf("messages = %#v", notifier.messages)
+	}
+}
+
+func TestServiceDoesNotNotifyGenericRunningCodexEvent(t *testing.T) {
+	fakeCodex := newFakeCodexAdapter()
+	notifier := &fakeNotifier{}
+	service := NewService(core.NewTaskManager(), WithCodex(fakeCodex), WithNotifier(notifier))
+
+	ctx := context.Background()
+	reply, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/codex start repo=/tmp/demo fix bug",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service.handleCodexEvent(ctx, codex.Event{
+		ThreadID: "thread-1",
+		Kind:     "item/commandExecution/started",
+		Message:  "item/commandExecution/started",
+	})
+
+	task, ok := service.TaskByID(reply.Task.ID)
+	if !ok {
+		t.Fatalf("task %q not found", reply.Task.ID)
+	}
+	if task.Status != core.TaskRunning || task.LastEvent != "item/commandExecution/started" {
+		t.Fatalf("task = %#v", task)
+	}
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	if len(notifier.messages) != 0 {
+		t.Fatalf("messages = %#v", notifier.messages)
+	}
 }
 
 func waitFor(t *testing.T, cond func() bool) {
