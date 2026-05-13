@@ -58,6 +58,27 @@ func TestJSONRPCAdapterThreadTurnAndApproval(t *testing.T) {
 	}
 }
 
+func TestEventFromTurnCompletedExtractsLastAgentMessage(t *testing.T) {
+	event := eventFromNotification("turn/completed", map[string]any{
+		"threadId": "thread-1",
+		"turn": map[string]any{
+			"id": "turn-1",
+			"items": []any{
+				map[string]any{"type": "agentMessage", "text": "intermediate"},
+				map[string]any{"type": "commandExecution", "command": "go test ./..."},
+				map[string]any{"type": "agentMessage", "text": "final answer"},
+			},
+		},
+	})
+
+	if event.ThreadID != "thread-1" || event.TurnID != "turn-1" {
+		t.Fatalf("event ids = %#v", event)
+	}
+	if event.Message != "final answer" {
+		t.Fatalf("message = %q", event.Message)
+	}
+}
+
 func fakeCodexServer(t *testing.T, conn net.Conn, done chan<- map[string]any) {
 	t.Helper()
 	scanner := bufio.NewScanner(conn)
