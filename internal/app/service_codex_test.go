@@ -243,6 +243,104 @@ func TestServiceHandlesCodexCompletionEvent(t *testing.T) {
 	}
 }
 
+func TestServiceAggregatesAgentMessageDeltasOnCompletion(t *testing.T) {
+	fakeCodex := newFakeCodexAdapter()
+	notifier := &fakeNotifier{}
+	service := NewService(core.NewTaskManager(), WithCodex(fakeCodex), WithNotifier(notifier))
+
+	ctx := context.Background()
+	reply, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/codex start repo=/tmp/demo fix bug",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service.handleCodexEvent(ctx, codex.Event{
+		ThreadID: "thread-1",
+		TurnID:   "turn-1",
+		Kind:     "item/agentMessage/delta",
+		Message:  "final ",
+	})
+	service.handleCodexEvent(ctx, codex.Event{
+		ThreadID: "thread-1",
+		TurnID:   "turn-1",
+		Kind:     "item/agentMessage/delta",
+		Message:  "**answer**",
+	})
+	service.handleCodexEvent(ctx, codex.Event{
+		ThreadID: "thread-1",
+		TurnID:   "turn-1",
+		Kind:     "turn/completed",
+		Message:  "turn/completed",
+	})
+	service.handleCodexEvent(ctx, codex.Event{
+		ThreadID: "thread-1",
+		TurnID:   "turn-1",
+		Kind:     "turn/completed",
+		Message:  "turn/completed",
+	})
+
+	task, ok := service.TaskByID(reply.Task.ID)
+	if !ok {
+		t.Fatalf("task %q not found", reply.Task.ID)
+	}
+	if task.Status != core.TaskCompleted {
+		t.Fatalf("task status = %s", task.Status)
+	}
+
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	if len(notifier.markdown) != 1 {
+		t.Fatalf("markdown = %#v", notifier.markdown)
+	}
+	if notifier.markdown[0].text != "final **answer**" {
+		t.Fatalf("markdown text = %q", notifier.markdown[0].text)
+	}
+	if len(notifier.messages) != 0 {
+		t.Fatalf("messages = %#v", notifier.messages)
+	}
+}
+
+func TestServiceSuppressesEmptyCompletionNotification(t *testing.T) {
+	fakeCodex := newFakeCodexAdapter()
+	notifier := &fakeNotifier{}
+	service := NewService(core.NewTaskManager(), WithCodex(fakeCodex), WithNotifier(notifier))
+
+	ctx := context.Background()
+	reply, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/codex start repo=/tmp/demo fix bug",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service.handleCodexEvent(ctx, codex.Event{
+		ThreadID: "thread-1",
+		TurnID:   "turn-1",
+		Kind:     "turn/completed",
+		Message:  "turn/completed",
+	})
+
+	task, ok := service.TaskByID(reply.Task.ID)
+	if !ok {
+		t.Fatalf("task %q not found", reply.Task.ID)
+	}
+	if task.Status != core.TaskCompleted {
+		t.Fatalf("task status = %s", task.Status)
+	}
+
+	notifier.mu.Lock()
+	defer notifier.mu.Unlock()
+	if len(notifier.markdown) != 0 || len(notifier.messages) != 0 {
+		t.Fatalf("markdown = %#v, messages = %#v", notifier.markdown, notifier.messages)
+	}
+}
+
 func TestServiceSuppressesNoisyCodexDeltaEvent(t *testing.T) {
 	fakeCodex := newFakeCodexAdapter()
 	notifier := &fakeNotifier{}

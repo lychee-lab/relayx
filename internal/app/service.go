@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lychee-lab/relayx/internal/codex"
@@ -50,13 +51,16 @@ type Auditor interface {
 }
 
 type Service struct {
-	tasks       *core.TaskManager
-	codex       codex.Adapter
-	notifier    Notifier
-	policy      core.Policy
-	approvalTTL time.Duration
-	state       StateStore
-	auditor     Auditor
+	tasks                 *core.TaskManager
+	codex                 codex.Adapter
+	notifier              Notifier
+	policy                core.Policy
+	approvalTTL           time.Duration
+	state                 StateStore
+	auditor               Auditor
+	eventMu               sync.Mutex
+	agentMessageDeltas    map[string]string
+	completionNotifiedKey map[string]struct{}
 }
 
 type Option func(*Service)
@@ -99,8 +103,10 @@ func WithAuditor(auditor Auditor) Option {
 
 func NewService(tasks *core.TaskManager, opts ...Option) *Service {
 	service := &Service{
-		tasks:       tasks,
-		approvalTTL: 10 * time.Minute,
+		tasks:                 tasks,
+		approvalTTL:           10 * time.Minute,
+		agentMessageDeltas:    make(map[string]string),
+		completionNotifiedKey: make(map[string]struct{}),
 	}
 	for _, opt := range opts {
 		opt(service)
@@ -477,6 +483,14 @@ func (s *Service) handleCodexEvent(ctx context.Context, event codex.Event) {
 	if event.ThreadID == "" {
 		return
 	}
+	currentTask, ok := s.tasks.ByThread(string(event.ThreadID))
+	if !ok {
+		return
+	}
+	if event.Kind == "item/agentMessage/delta" {
+		s.appendAgentMessageDelta(currentTask, event)
+		return
+	}
 	if isNoisyCodexEvent(event.Kind) {
 		return
 	}
@@ -489,6 +503,16 @@ func (s *Service) handleCodexEvent(ctx context.Context, event codex.Event) {
 	case "error", "protocol/error":
 		status = core.TaskFailed
 		errText = event.Message
+	}
+
+	if status == core.TaskRunning && isTerminalTaskStatus(currentTask.Status) {
+		return
+	}
+	if status == core.TaskCompleted {
+		event.Message = s.consumeFinalAgentMessage(currentTask, event)
+		if s.completionNotificationSent(currentTask, event) {
+			return
+		}
 	}
 
 	task, ok := s.tasks.SetStatusByThread(string(event.ThreadID), status, event.Kind, errText)
@@ -504,11 +528,15 @@ func (s *Service) handleCodexEvent(ctx context.Context, event codex.Event) {
 	if status == core.TaskCompleted {
 		if markdownNotifier, ok := s.notifier.(MarkdownNotifier); ok {
 			if err := markdownNotifier.SendMarkdown(ctx, task.ChatID, fmt.Sprintf("Codex task %s completed", task.ID), message); err == nil {
+				s.markCompletionNotificationSent(*task, event)
 				return
 			}
 		}
 	}
 	_ = s.notifier.SendMessage(ctx, task.ChatID, message)
+	if status == core.TaskCompleted {
+		s.markCompletionNotificationSent(*task, event)
+	}
 }
 
 func isNoisyCodexEvent(kind string) bool {
@@ -523,10 +551,7 @@ func codexEventNotification(taskID string, status core.TaskStatus, event codex.E
 
 	switch status {
 	case core.TaskCompleted:
-		if message != "" {
-			return message
-		}
-		return fmt.Sprintf("Codex task %s completed.", taskID)
+		return message
 	case core.TaskFailed:
 		if message != "" {
 			return fmt.Sprintf("Codex task %s failed: %s", taskID, message)
@@ -534,6 +559,102 @@ func codexEventNotification(taskID string, status core.TaskStatus, event codex.E
 		return fmt.Sprintf("Codex task %s failed: %s", taskID, event.Kind)
 	default:
 		return ""
+	}
+}
+
+func (s *Service) appendAgentMessageDelta(task core.Task, event codex.Event) {
+	message := event.Message
+	if message == "" || message == event.Kind {
+		return
+	}
+
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+	for _, key := range codexMessageKeys(task, event) {
+		s.agentMessageDeltas[key] += message
+	}
+}
+
+func (s *Service) consumeFinalAgentMessage(task core.Task, event codex.Event) string {
+	message := event.Message
+	if message == event.Kind {
+		message = ""
+	}
+
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+	for _, key := range codexMessageKeys(task, event) {
+		if accumulated := s.agentMessageDeltas[key]; strings.TrimSpace(message) == "" && strings.TrimSpace(accumulated) != "" {
+			message = accumulated
+		}
+		delete(s.agentMessageDeltas, key)
+	}
+	return message
+}
+
+func (s *Service) completionNotificationSent(task core.Task, event codex.Event) bool {
+	if strings.TrimSpace(event.Message) == "" || event.Message == event.Kind {
+		return false
+	}
+
+	key := completionNotificationKey(task, event)
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+	_, ok := s.completionNotifiedKey[key]
+	return ok
+}
+
+func (s *Service) markCompletionNotificationSent(task core.Task, event codex.Event) {
+	key := completionNotificationKey(task, event)
+	s.eventMu.Lock()
+	defer s.eventMu.Unlock()
+	s.completionNotifiedKey[key] = struct{}{}
+}
+
+func completionNotificationKey(task core.Task, event codex.Event) string {
+	turnID := string(event.TurnID)
+	if turnID == "" {
+		turnID = task.TurnID
+	}
+	if turnID == "" {
+		turnID = string(event.ThreadID)
+	}
+	return task.ID + "\x00" + turnID
+}
+
+func codexMessageKeys(task core.Task, event codex.Event) []string {
+	keys := make([]string, 0, 3)
+	add := func(key string) {
+		if key == "" {
+			return
+		}
+		for _, existing := range keys {
+			if existing == key {
+				return
+			}
+		}
+		keys = append(keys, key)
+	}
+
+	threadID := string(event.ThreadID)
+	turnID := string(event.TurnID)
+	if threadID != "" && turnID != "" {
+		add(threadID + "\x00" + turnID)
+	}
+	if task.ThreadID != "" && task.TurnID != "" {
+		add(task.ThreadID + "\x00" + task.TurnID)
+	}
+	add(threadID)
+	add(task.ThreadID)
+	return keys
+}
+
+func isTerminalTaskStatus(status core.TaskStatus) bool {
+	switch status {
+	case core.TaskCompleted, core.TaskFailed, core.TaskStopped:
+		return true
+	default:
+		return false
 	}
 }
 

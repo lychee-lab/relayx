@@ -522,6 +522,8 @@ func eventFromNotification(method string, params map[string]any) Event {
 	}
 	if msg := stringValue(params, "message"); msg != "" {
 		event.Message = msg
+	} else if msg := stringValue(params, "delta"); msg != "" {
+		event.Message = msg
 	} else if msg := lastAgentMessageFromCompletedTurn(params); msg != "" {
 		event.Message = msg
 	} else if msg := agentMessageFromItem(params["item"]); msg != "" {

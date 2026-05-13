@@ -165,6 +165,22 @@ func TestEventFromTurnCompletedExtractsLastAgentMessage(t *testing.T) {
 	}
 }
 
+func TestEventFromAgentMessageDeltaExtractsDelta(t *testing.T) {
+	event := eventFromNotification("item/agentMessage/delta", map[string]any{
+		"threadId": "thread-1",
+		"turnId":   "turn-1",
+		"itemId":   "item-1",
+		"delta":    "partial answer",
+	})
+
+	if event.ThreadID != "thread-1" || event.TurnID != "turn-1" {
+		t.Fatalf("event ids = %#v", event)
+	}
+	if event.Message != "partial answer" {
+		t.Fatalf("message = %q", event.Message)
+	}
+}
+
 func fakeCodexServer(t *testing.T, conn net.Conn, done chan<- map[string]any) {
 	t.Helper()
 	scanner := bufio.NewScanner(conn)
