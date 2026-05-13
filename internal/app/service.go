@@ -28,6 +28,10 @@ type Notifier interface {
 	SendApproval(ctx context.Context, chatID string, approval core.Approval) error
 }
 
+type MarkdownNotifier interface {
+	SendMarkdown(ctx context.Context, chatID string, title string, markdown string) error
+}
+
 type StateStore interface {
 	Save(ctx context.Context, snapshot core.Snapshot) error
 }
@@ -319,6 +323,13 @@ func (s *Service) handleCodexEvent(ctx context.Context, event codex.Event) {
 	if message == "" {
 		return
 	}
+	if status == core.TaskCompleted {
+		if markdownNotifier, ok := s.notifier.(MarkdownNotifier); ok {
+			if err := markdownNotifier.SendMarkdown(ctx, task.ChatID, fmt.Sprintf("Codex task %s completed", task.ID), message); err == nil {
+				return
+			}
+		}
+	}
 	_ = s.notifier.SendMessage(ctx, task.ChatID, message)
 }
 
@@ -335,7 +346,7 @@ func codexEventNotification(taskID string, status core.TaskStatus, event codex.E
 	switch status {
 	case core.TaskCompleted:
 		if message != "" {
-			return fmt.Sprintf("Codex task %s completed: %s", taskID, message)
+			return message
 		}
 		return fmt.Sprintf("Codex task %s completed.", taskID)
 	case core.TaskFailed:

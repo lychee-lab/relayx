@@ -36,6 +36,13 @@ func (n Notifier) SendMessage(ctx context.Context, chatID string, text string) e
 	return n.Client.SendMessage(ctx, Message{ChatID: chatID, Text: text})
 }
 
+func (n Notifier) SendMarkdown(ctx context.Context, chatID string, title string, markdown string) error {
+	if n.Client == nil {
+		return fmt.Errorf("feishu client is nil")
+	}
+	return n.Client.SendMarkdownCard(ctx, MarkdownCard{ChatID: chatID, Title: title, Markdown: markdown})
+}
+
 func (n Notifier) SendApproval(ctx context.Context, chatID string, approval core.Approval) error {
 	if n.Client == nil {
 		return fmt.Errorf("feishu client is nil")
@@ -59,6 +66,18 @@ func (c *Client) SendApprovalCard(ctx context.Context, card ApprovalCard) error 
 		return fmt.Errorf("chat id is required")
 	}
 	payload := approvalCardPayload(card)
+	content, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return c.sendMessage(ctx, card.ChatID, "interactive", string(content))
+}
+
+func (c *Client) SendMarkdownCard(ctx context.Context, card MarkdownCard) error {
+	if card.ChatID == "" {
+		return fmt.Errorf("chat id is required")
+	}
+	payload := markdownCardPayload(card)
 	content, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -226,6 +245,29 @@ func approvalCardPayload(card ApprovalCard) map[string]any {
 			"title": map[string]any{"tag": "plain_text", "content": card.Title},
 		},
 		"elements": elements,
+	}
+}
+
+func markdownCardPayload(card MarkdownCard) map[string]any {
+	title := strings.TrimSpace(card.Title)
+	if title == "" {
+		title = "Codex result"
+	}
+	markdown := core.RedactSecrets(strings.TrimSpace(card.Markdown))
+	if markdown == "" {
+		markdown = "_No content._"
+	}
+	return map[string]any{
+		"config": map[string]any{"wide_screen_mode": true},
+		"header": map[string]any{
+			"title": map[string]any{"tag": "plain_text", "content": title},
+		},
+		"elements": []map[string]any{
+			{
+				"tag":     "markdown",
+				"content": markdown,
+			},
+		},
 	}
 }
 
