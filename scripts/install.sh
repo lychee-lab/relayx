@@ -178,6 +178,7 @@ allowed_repos = []
 [feishu]
 app_id = ""
 app_secret = ""
+receive_mode = "long_connection"
 base_url = "https://open.feishu.cn/open-apis"
 verification_token = ""
 EOF

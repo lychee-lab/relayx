@@ -16,6 +16,7 @@ const (
 	defaultCodexBin   = "codex"
 	defaultCodexMode  = "disabled"
 	defaultFeishuURL  = "https://open.feishu.cn/open-apis"
+	defaultFeishuMode = "long_connection"
 )
 
 type Config struct {
@@ -32,20 +33,22 @@ type Config struct {
 	FeishuAppSecret   string
 	FeishuBaseURL     string
 	FeishuVerifyToken string
+	FeishuReceiveMode string
 	FeishuConfigured  bool
 }
 
 type Summary struct {
-	ConfigPath       string   `json:"config_path"`
-	ListenAddr       string   `json:"listen_addr"`
-	CodexBin         string   `json:"codex_bin"`
-	CodexMode        string   `json:"codex_mode"`
-	RuntimeDir       string   `json:"runtime_dir"`
-	DBPath           string   `json:"db_path"`
-	AuditPath        string   `json:"audit_path"`
-	AllowedRepos     []string `json:"allowed_repos"`
-	AuthorizedUsers  []string `json:"authorized_users"`
-	FeishuConfigured bool     `json:"feishu_configured"`
+	ConfigPath        string   `json:"config_path"`
+	ListenAddr        string   `json:"listen_addr"`
+	CodexBin          string   `json:"codex_bin"`
+	CodexMode         string   `json:"codex_mode"`
+	RuntimeDir        string   `json:"runtime_dir"`
+	DBPath            string   `json:"db_path"`
+	AuditPath         string   `json:"audit_path"`
+	AllowedRepos      []string `json:"allowed_repos"`
+	AuthorizedUsers   []string `json:"authorized_users"`
+	FeishuReceiveMode string   `json:"feishu_receive_mode"`
+	FeishuConfigured  bool     `json:"feishu_configured"`
 }
 
 type fileConfig struct {
@@ -62,6 +65,7 @@ type fileConfig struct {
 		AppSecret         string `toml:"app_secret"`
 		BaseURL           string `toml:"base_url"`
 		VerificationToken string `toml:"verification_token"`
+		ReceiveMode       string `toml:"receive_mode"`
 	} `toml:"feishu"`
 }
 
@@ -84,6 +88,10 @@ func Load() (Config, error) {
 	if err := applyEnv(&cfg); err != nil {
 		return Config{}, err
 	}
+	cfg.FeishuReceiveMode = normalizeReceiveMode(cfg.FeishuReceiveMode)
+	if !validReceiveMode(cfg.FeishuReceiveMode) {
+		return Config{}, fmt.Errorf("invalid feishu receive mode %q", cfg.FeishuReceiveMode)
+	}
 	cfg.FeishuConfigured = cfg.FeishuAppID != "" && cfg.FeishuAppSecret != ""
 
 	return cfg, nil
@@ -91,16 +99,17 @@ func Load() (Config, error) {
 
 func (c Config) Summary() Summary {
 	return Summary{
-		ConfigPath:       c.ConfigPath,
-		ListenAddr:       c.ListenAddr,
-		CodexBin:         c.CodexBin,
-		CodexMode:        c.CodexMode,
-		RuntimeDir:       c.RuntimeDir,
-		DBPath:           c.DBPath,
-		AuditPath:        c.AuditPath,
-		AllowedRepos:     c.AllowedRepos,
-		AuthorizedUsers:  c.AuthorizedUsers,
-		FeishuConfigured: c.FeishuConfigured,
+		ConfigPath:        c.ConfigPath,
+		ListenAddr:        c.ListenAddr,
+		CodexBin:          c.CodexBin,
+		CodexMode:         c.CodexMode,
+		RuntimeDir:        c.RuntimeDir,
+		DBPath:            c.DBPath,
+		AuditPath:         c.AuditPath,
+		AllowedRepos:      c.AllowedRepos,
+		AuthorizedUsers:   c.AuthorizedUsers,
+		FeishuReceiveMode: c.FeishuReceiveMode,
+		FeishuConfigured:  c.FeishuConfigured,
 	}
 }
 
@@ -111,14 +120,15 @@ func defaultConfig() (Config, error) {
 	}
 
 	return Config{
-		ConfigPath:    filepath.Join(baseDir, configFileName),
-		ListenAddr:    defaultListenAddr,
-		CodexBin:      defaultCodexBin,
-		CodexMode:     defaultCodexMode,
-		RuntimeDir:    filepath.Join(baseDir, "run"),
-		DBPath:        filepath.Join(baseDir, "state.json"),
-		AuditPath:     filepath.Join(baseDir, "logs", "audit.jsonl"),
-		FeishuBaseURL: defaultFeishuURL,
+		ConfigPath:        filepath.Join(baseDir, configFileName),
+		ListenAddr:        defaultListenAddr,
+		CodexBin:          defaultCodexBin,
+		CodexMode:         defaultCodexMode,
+		RuntimeDir:        filepath.Join(baseDir, "run"),
+		DBPath:            filepath.Join(baseDir, "state.json"),
+		AuditPath:         filepath.Join(baseDir, "logs", "audit.jsonl"),
+		FeishuBaseURL:     defaultFeishuURL,
+		FeishuReceiveMode: defaultFeishuMode,
 	}, nil
 }
 
@@ -189,6 +199,9 @@ func applyConfigFile(cfg *Config) error {
 	if fc.Feishu.VerificationToken != "" {
 		cfg.FeishuVerifyToken = fc.Feishu.VerificationToken
 	}
+	if fc.Feishu.ReceiveMode != "" {
+		cfg.FeishuReceiveMode = fc.Feishu.ReceiveMode
+	}
 
 	return nil
 }
@@ -240,7 +253,32 @@ func applyEnv(cfg *Config) error {
 	if value := os.Getenv("FEISHU_VERIFICATION_TOKEN"); value != "" {
 		cfg.FeishuVerifyToken = value
 	}
+	if value := os.Getenv("FEISHU_RECEIVE_MODE"); value != "" {
+		cfg.FeishuReceiveMode = value
+	}
 	return nil
+}
+
+func normalizeReceiveMode(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.ReplaceAll(value, "-", "_")
+	switch value {
+	case "", "long", "ws", "websocket":
+		return "long_connection"
+	case "callback", "http", "webhook":
+		return "http_callback"
+	default:
+		return value
+	}
+}
+
+func validReceiveMode(value string) bool {
+	switch value {
+	case "long_connection", "http_callback", "both", "disabled":
+		return true
+	default:
+		return false
+	}
 }
 
 func expandPath(value string) (string, error) {

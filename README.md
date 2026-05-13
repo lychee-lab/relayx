@@ -30,7 +30,8 @@ RelayX currently includes:
 - Local HTTP API for development and Feishu callbacks.
 - Codex app-server stdio JSON-RPC adapter.
 - Feishu OpenAPI client for text messages and interactive approval cards.
-- Feishu HTTP callback handler for URL verification, bot messages, and card actions.
+- Feishu long-connection receiver for bot messages and card actions.
+- Feishu HTTP callback handler for optional callback mode and URL verification.
 - `/codex` command parser.
 - In-memory task and approval state manager.
 - File-backed state snapshot.
@@ -39,9 +40,9 @@ RelayX currently includes:
 - Secret redaction for outbound messages.
 - Unit tests, race tests, and an in-process end-to-end test.
 
-The Feishu receive path is currently implemented through HTTP callbacks. A Feishu
-long-connection receiver can be added later as another adapter over the same app
-service.
+The default Feishu receive path is long connection mode. It establishes an
+outbound WebSocket connection to Feishu, so local development does not need a
+public callback domain or tunnel.
 
 ## Architecture
 
@@ -50,7 +51,7 @@ The high-level flow is:
 ```text
 Feishu mobile/client
   -> Feishu bot message or card action
-  -> RelayX HTTP callback / local dev endpoint
+  -> RelayX long connection receiver / HTTP callback / local dev endpoint
   -> command router and approval router
   -> task manager, policy checks, audit log
   -> Codex app-server JSON-RPC adapter
@@ -62,7 +63,8 @@ Runtime processes:
 
 ```text
 relayx
-  - Feishu callback handler
+  - Feishu long connection receiver
+  - Feishu callback handler for optional HTTP mode
   - Feishu OpenAPI sender
   - Codex JSON-RPC client
   - task and approval manager
@@ -82,8 +84,9 @@ only talks to RelayX, and RelayX talks to Codex locally.
 - Go 1.20 or newer.
 - Codex CLI.
 - Feishu app credentials if you want Feishu integration.
-- A reachable HTTP callback URL for Feishu callback mode, such as a public relay,
-  tunnel, or reverse proxy pointing to RelayX.
+- Outbound internet access from the machine running RelayX.
+- A reachable HTTP callback URL is only required if you explicitly use
+  `receive_mode = "http_callback"` or `receive_mode = "both"`.
 
 On macOS, the installer can install Codex CLI through Homebrew if `codex` is not
 already available.
@@ -194,6 +197,7 @@ allowed_repos = []
 [feishu]
 app_id = ""
 app_secret = ""
+receive_mode = "long_connection"
 base_url = "https://open.feishu.cn/open-apis"
 verification_token = ""
 ```
@@ -219,6 +223,7 @@ RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
 RELAYX_ALLOWED_REPOS=/Users/me/project-a,/Users/me/project-b
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
+FEISHU_RECEIVE_MODE=long_connection
 FEISHU_VERIFICATION_TOKEN=xxx
 FEISHU_BASE_URL=https://open.feishu.cn/open-apis
 ```
@@ -229,30 +234,41 @@ Legacy `CODEX_BABYSITTER_*` environment variables are no longer read.
 
 Create a Feishu internal app and enable bot capabilities.
 
-Configure event/callback subscriptions:
+Configure event subscriptions:
 
 ```text
 im.message.receive_v1
 card.action.trigger
 ```
 
-RelayX callback endpoint:
+Set the event subscription method to:
+
+```text
+Use long connection to receive events
+```
+
+Keep `relayx serve` running while saving the long connection setting in Feishu
+Open Platform, because Feishu requires at least one online long-connection
+client when the setting is saved.
+
+HTTP callback mode is still available for deployments that prefer webhooks. In
+that mode, configure the callback endpoint as:
 
 ```text
 POST /feishu/events
 ```
 
 `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are enough for Feishu OpenAPI access and
-outbound messages. `FEISHU_VERIFICATION_TOKEN` is optional; when it is set,
-RelayX verifies callback tokens from Feishu, and when it is empty, RelayX skips
-that token check.
+outbound messages. `FEISHU_VERIFICATION_TOKEN` is optional and only relevant to
+HTTP callback token verification; long connection mode authenticates through the
+App ID and App Secret.
 
 Message flow:
 
 ```text
 User sends /codex start ...
   -> Feishu sends im.message.receive_v1
-  -> RelayX parses command and starts or updates a task
+  -> RelayX receives it through long connection and starts or updates a task
   -> Codex emits events or approval requests
   -> RelayX sends Feishu text messages or interactive approval cards
   -> User clicks approve/deny
@@ -392,8 +408,8 @@ internal/codex/      Codex app-server JSON-RPC adapter.
 internal/config/     Environment config loading.
 internal/core/       Commands, policy, redaction, task state.
 internal/e2e/        In-process end-to-end tests.
-internal/feishu/     Feishu OpenAPI client and callback handler.
-internal/httpapi/    HTTP routes shared by dev and Feishu callback mode.
+internal/feishu/     Feishu OpenAPI client, long connection receiver, and callback handler.
+internal/httpapi/    HTTP routes shared by dev and optional Feishu callback mode.
 internal/persist/    File-backed state and audit log.
 scripts/             Install and uninstall scripts.
 docs/                Design notes and milestone plan.
@@ -403,7 +419,6 @@ docs/                Design notes and milestone plan.
 
 Near-term:
 
-- Add a Feishu long-connection receiver adapter.
 - Add richer `/codex diff` and `/codex logs` responses.
 - Improve Codex event summarization.
 - Add launchd/systemd service templates.
@@ -436,10 +451,17 @@ If Codex cannot start:
 - Run `codex --version`.
 - Run RelayX with `RELAYX_CODEX_MODE=disabled` to isolate Feishu/local HTTP issues.
 
-If Feishu callbacks do not arrive:
+If Feishu long-connection events do not arrive:
 
 - Confirm Feishu event subscriptions include `im.message.receive_v1` and `card.action.trigger`.
-- Confirm callback URL points to `/feishu/events`.
+- Confirm the event subscription method is `Use long connection to receive events`.
+- Keep `relayx serve` running and check for `feishu long connection receiver starting`.
+- Confirm Feishu Open Platform shows the long-connection client as online.
+
+If HTTP callbacks do not arrive:
+
+- Confirm `receive_mode` is `http_callback` or `both`.
+- Confirm the callback URL points to `/feishu/events`.
 - If `FEISHU_VERIFICATION_TOKEN` is set, confirm it matches Feishu app settings.
 - Confirm your tunnel or reverse proxy can reach `RELAYX_LISTEN_ADDR`.
 
@@ -481,7 +503,8 @@ RelayX 当前已经包含：
 - 用于开发调试和飞书回调的本地 HTTP API。
 - Codex app-server 的 stdio JSON-RPC 适配器。
 - 用于文本消息和交互式审批卡片的飞书 OpenAPI 客户端。
-- 支持 URL verification、机器人消息和卡片操作的飞书 HTTP 回调处理器。
+- 用于接收机器人消息和卡片操作的飞书长连接接收器。
+- 用于可选 HTTP callback 模式和 URL verification 的飞书 HTTP 回调处理器。
 - `/codex` 指令解析器。
 - 内存中的任务和审批状态管理器。
 - 文件型状态快照。
@@ -490,7 +513,7 @@ RelayX 当前已经包含：
 - 外发消息的敏感信息脱敏。
 - 单元测试、race 测试和进程内端到端测试。
 
-飞书接收链路当前通过 HTTP callback 实现。后续可以在同一套 app service 之上增加飞书长连接接收器，作为另一个输入适配器。
+飞书接收链路默认使用长连接模式。RelayX 会主动向飞书建立 WebSocket 出站连接，因此本地开发不需要公网回调域名或内网穿透。
 
 ## 架构
 
@@ -499,7 +522,7 @@ RelayX 当前已经包含：
 ```text
 Feishu mobile/client
   -> Feishu bot message or card action
-  -> RelayX HTTP callback / local dev endpoint
+  -> RelayX long connection receiver / HTTP callback / local dev endpoint
   -> command router and approval router
   -> task manager, policy checks, audit log
   -> Codex app-server JSON-RPC adapter
@@ -511,7 +534,8 @@ Feishu mobile/client
 
 ```text
 relayx
-  - Feishu callback handler
+  - Feishu long connection receiver
+  - Feishu callback handler for optional HTTP mode
   - Feishu OpenAPI sender
   - Codex JSON-RPC client
   - task and approval manager
@@ -530,7 +554,8 @@ RelayX 不会把 Codex app-server 直接暴露到公网。飞书只和 RelayX �
 - Go 1.20 或更高版本。
 - Codex CLI。
 - 如果需要飞书集成，需要飞书应用凭证。
-- 使用飞书 HTTP callback 模式时，需要一个可被飞书访问的回调 URL，例如公网 relay、内网穿透或指向 RelayX 的反向代理。
+- 运行 RelayX 的机器需要能够访问公网。
+- 只有显式使用 `receive_mode = "http_callback"` 或 `receive_mode = "both"` 时，才需要一个可被飞书访问的 HTTP 回调 URL。
 
 在 macOS 上，如果本机还没有 `codex`，安装脚本可以通过 Homebrew 安装 Codex CLI。
 
@@ -636,6 +661,7 @@ allowed_repos = []
 [feishu]
 app_id = ""
 app_secret = ""
+receive_mode = "long_connection"
 base_url = "https://open.feishu.cn/open-apis"
 verification_token = ""
 ```
@@ -665,6 +691,7 @@ RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
 RELAYX_ALLOWED_REPOS=/Users/me/project-a,/Users/me/project-b
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
+FEISHU_RECEIVE_MODE=long_connection
 FEISHU_VERIFICATION_TOKEN=xxx
 FEISHU_BASE_URL=https://open.feishu.cn/open-apis
 ```
@@ -675,29 +702,36 @@ FEISHU_BASE_URL=https://open.feishu.cn/open-apis
 
 创建一个飞书企业自建应用，并启用机器人能力。
 
-配置事件或回调订阅：
+配置事件订阅：
 
 ```text
 im.message.receive_v1
 card.action.trigger
 ```
 
-RelayX 回调地址：
+事件订阅方式选择：
+
+```text
+使用长连接接收事件
+```
+
+在飞书开放平台保存长连接配置时，需要保持 `relayx serve` 正在运行，因为飞书要求保存时至少有一个在线的长连接客户端。
+
+如果部署时明确希望使用 HTTP callback，也可以把 `receive_mode` 改为 `http_callback` 或 `both`，并配置回调地址：
 
 ```text
 POST /feishu/events
 ```
 
 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 足够用于飞书 OpenAPI 访问和外发消息。
-`FEISHU_VERIFICATION_TOKEN` 是可选项；配置后 RelayX 会校验飞书回调里的 token，
-不配置时 RelayX 会跳过这项 token 校验。
+`FEISHU_VERIFICATION_TOKEN` 是可选项，只用于 HTTP callback token 校验；长连接模式通过 App ID 和 App Secret 鉴权。
 
 消息链路：
 
 ```text
 User sends /codex start ...
   -> Feishu sends im.message.receive_v1
-  -> RelayX parses command and starts or updates a task
+  -> RelayX receives it through long connection and starts or updates a task
   -> Codex emits events or approval requests
   -> RelayX sends Feishu text messages or interactive approval cards
   -> User clicks approve/deny
@@ -834,8 +868,8 @@ internal/codex/      Codex app-server JSON-RPC adapter.
 internal/config/     Environment config loading.
 internal/core/       Commands, policy, redaction, task state.
 internal/e2e/        In-process end-to-end tests.
-internal/feishu/     Feishu OpenAPI client and callback handler.
-internal/httpapi/    HTTP routes shared by dev and Feishu callback mode.
+internal/feishu/     Feishu OpenAPI client, long connection receiver, and callback handler.
+internal/httpapi/    HTTP routes shared by dev and optional Feishu callback mode.
 internal/persist/    File-backed state and audit log.
 scripts/             Install and uninstall scripts.
 docs/                Design notes and milestone plan.
@@ -849,8 +883,8 @@ docs/                Design notes and milestone plan.
 - `internal/config/` 包含环境变量配置加载。
 - `internal/core/` 包含命令、策略、脱敏和任务状态。
 - `internal/e2e/` 包含进程内端到端测试。
-- `internal/feishu/` 包含飞书 OpenAPI 客户端和回调处理器。
-- `internal/httpapi/` 包含开发模式和飞书回调模式共用的 HTTP 路由。
+- `internal/feishu/` 包含飞书 OpenAPI 客户端、长连接接收器和回调处理器。
+- `internal/httpapi/` 包含开发模式和可选飞书回调模式共用的 HTTP 路由。
 - `internal/persist/` 包含文件型状态和审计日志。
 - `scripts/` 包含安装和卸载脚本。
 - `docs/` 包含设计说明和里程碑计划。
@@ -859,7 +893,6 @@ docs/                Design notes and milestone plan.
 
 近期：
 
-- 增加飞书长连接接收适配器。
 - 增强 `/codex diff` 和 `/codex logs` 响应。
 - 改进 Codex 事件摘要。
 - 增加 launchd/systemd 服务模板。
@@ -892,9 +925,16 @@ relayx parse "/codex start repo=/tmp/demo fix bug"
 - 运行 `codex --version`。
 - 使用 `RELAYX_CODEX_MODE=disabled` 运行 RelayX，以隔离飞书或本地 HTTP 问题。
 
-如果飞书回调没有到达：
+如果飞书长连接事件没有到达：
 
 - 确认飞书事件订阅包含 `im.message.receive_v1` 和 `card.action.trigger`。
+- 确认事件订阅方式是“使用长连接接收事件”。
+- 保持 `relayx serve` 正在运行，并检查日志里是否有 `feishu long connection receiver starting`。
+- 确认飞书开放平台显示长连接客户端在线。
+
+如果 HTTP callback 没有到达：
+
+- 确认 `receive_mode` 是 `http_callback` 或 `both`。
 - 确认 callback URL 指向 `/feishu/events`。
 - 如果配置了 `FEISHU_VERIFICATION_TOKEN`，确认它与飞书应用设置一致。
 - 确认内网穿透或反向代理可以访问 `RELAYX_LISTEN_ADDR`。

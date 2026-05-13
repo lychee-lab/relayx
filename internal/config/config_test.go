@@ -31,6 +31,9 @@ func TestLoadDefaultsToRelayXHome(t *testing.T) {
 	if cfg.FeishuConfigured {
 		t.Fatal("FeishuConfigured = true, want false")
 	}
+	if cfg.FeishuReceiveMode != "long_connection" {
+		t.Fatalf("FeishuReceiveMode = %q", cfg.FeishuReceiveMode)
+	}
 }
 
 func TestLoadReadsTOMLConfig(t *testing.T) {
@@ -51,6 +54,7 @@ app_id = "cli_file"
 app_secret = "secret_file"
 base_url = "https://example.test/open-apis"
 verification_token = "verify_file"
+receive_mode = "http_callback"
 `)
 	t.Setenv("RELAYX_CONFIG", configPath)
 
@@ -83,7 +87,7 @@ verification_token = "verify_file"
 	if !reflect.DeepEqual(cfg.AllowedRepos, []string{"/repo/a", "/repo/b"}) {
 		t.Fatalf("AllowedRepos = %#v", cfg.AllowedRepos)
 	}
-	if cfg.FeishuAppID != "cli_file" || cfg.FeishuAppSecret != "secret_file" || cfg.FeishuBaseURL != "https://example.test/open-apis" || cfg.FeishuVerifyToken != "verify_file" {
+	if cfg.FeishuAppID != "cli_file" || cfg.FeishuAppSecret != "secret_file" || cfg.FeishuBaseURL != "https://example.test/open-apis" || cfg.FeishuVerifyToken != "verify_file" || cfg.FeishuReceiveMode != "http_callback" {
 		t.Fatalf("feishu config = %#v", cfg)
 	}
 	if !cfg.FeishuConfigured {
@@ -109,6 +113,7 @@ app_id = "cli_file"
 app_secret = "secret_file"
 base_url = "https://file.example/open-apis"
 verification_token = "verify_file"
+receive_mode = "http_callback"
 `)
 	t.Setenv("RELAYX_CONFIG", configPath)
 	t.Setenv("RELAYX_LISTEN_ADDR", "127.0.0.1:9999")
@@ -123,6 +128,7 @@ verification_token = "verify_file"
 	t.Setenv("FEISHU_APP_SECRET", "secret_env")
 	t.Setenv("FEISHU_BASE_URL", "https://env.example/open-apis")
 	t.Setenv("FEISHU_VERIFICATION_TOKEN", "verify_env")
+	t.Setenv("FEISHU_RECEIVE_MODE", "websocket")
 
 	cfg, err := Load()
 	if err != nil {
@@ -147,8 +153,26 @@ verification_token = "verify_file"
 	if !reflect.DeepEqual(cfg.AllowedRepos, []string{"/repo/env-a", "/repo/env-b"}) {
 		t.Fatalf("AllowedRepos = %#v", cfg.AllowedRepos)
 	}
-	if cfg.FeishuAppID != "cli_env" || cfg.FeishuAppSecret != "secret_env" || cfg.FeishuBaseURL != "https://env.example/open-apis" || cfg.FeishuVerifyToken != "verify_env" {
+	if cfg.FeishuAppID != "cli_env" || cfg.FeishuAppSecret != "secret_env" || cfg.FeishuBaseURL != "https://env.example/open-apis" || cfg.FeishuVerifyToken != "verify_env" || cfg.FeishuReceiveMode != "long_connection" {
 		t.Fatalf("feishu env overrides did not apply: %#v", cfg)
+	}
+}
+
+func TestLoadRejectsInvalidReceiveMode(t *testing.T) {
+	home := testHome(t)
+	configPath := filepath.Join(home, "bad-mode.toml")
+	writeConfig(t, configPath, `
+[feishu]
+receive_mode = "carrier_pigeon"
+`)
+	t.Setenv("RELAYX_CONFIG", configPath)
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "invalid feishu receive mode") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
@@ -204,6 +228,7 @@ func testHome(t *testing.T) string {
 	t.Setenv("FEISHU_APP_SECRET", "")
 	t.Setenv("FEISHU_BASE_URL", "")
 	t.Setenv("FEISHU_VERIFICATION_TOKEN", "")
+	t.Setenv("FEISHU_RECEIVE_MODE", "")
 	return home
 }
 
