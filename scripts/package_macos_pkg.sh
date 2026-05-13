@@ -176,9 +176,11 @@ RELAYX_AUDIT_LOG=$HOME/.local/state/relayx/audit.jsonl
 # RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
 # RELAYX_ALLOWED_REPOS=/path/to/repo-a,/path/to/repo-b
 
-# Feishu OpenAPI / callback settings:
+# Feishu OpenAPI settings:
 # FEISHU_APP_ID=cli_xxx
 # FEISHU_APP_SECRET=xxx
+
+# Optional callback verification:
 # FEISHU_VERIFICATION_TOKEN=xxx
 EOF
 chmod 0644 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/relayx.env.example"

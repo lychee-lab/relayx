@@ -197,11 +197,16 @@ RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
 RELAYX_ALLOWED_REPOS=/Users/me/project-a,/Users/me/project-b
 ```
 
-Feishu settings:
+Required Feishu settings:
 
 ```bash
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
+```
+
+Optional Feishu settings:
+
+```bash
 FEISHU_VERIFICATION_TOKEN=xxx
 FEISHU_BASE_URL=https://open.feishu.cn/open-apis
 ```
@@ -226,8 +231,10 @@ RelayX callback endpoint:
 POST /feishu/events
 ```
 
-Callback URL verification is handled by RelayX. Configure
-`FEISHU_VERIFICATION_TOKEN` to match the token configured in Feishu.
+`FEISHU_APP_ID` and `FEISHU_APP_SECRET` are enough for Feishu OpenAPI access and
+outbound messages. `FEISHU_VERIFICATION_TOKEN` is optional; when it is set,
+RelayX verifies callback tokens from Feishu, and when it is empty, RelayX skips
+that token check.
 
 Message flow:
 
@@ -242,9 +249,9 @@ User sends /codex start ...
   -> RelayX responds to Codex
 ```
 
-To test only credentials, RelayX needs `FEISHU_APP_ID` and
-`FEISHU_APP_SECRET`. To test sending a message, RelayX also needs a target
-`chat_id`, which is normally obtained from an incoming Feishu message event.
+To test credentials, RelayX needs `FEISHU_APP_ID` and `FEISHU_APP_SECRET`. To
+test sending a message, RelayX also needs a target `chat_id`, which is normally
+obtained from an incoming Feishu message event.
 
 ## Supported Feishu Commands
 
@@ -422,7 +429,7 @@ If Feishu callbacks do not arrive:
 
 - Confirm Feishu event subscriptions include `im.message.receive_v1` and `card.action.trigger`.
 - Confirm callback URL points to `/feishu/events`.
-- Confirm `FEISHU_VERIFICATION_TOKEN` matches Feishu app settings.
+- If `FEISHU_VERIFICATION_TOKEN` is set, confirm it matches Feishu app settings.
 - Confirm your tunnel or reverse proxy can reach `RELAYX_LISTEN_ADDR`.
 
 If Feishu sending fails:
@@ -627,11 +634,16 @@ RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
 RELAYX_ALLOWED_REPOS=/Users/me/project-a,/Users/me/project-b
 ```
 
-飞书配置：
+飞书必填配置：
 
 ```bash
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
+```
+
+飞书可选配置：
+
+```bash
 FEISHU_VERIFICATION_TOKEN=xxx
 FEISHU_BASE_URL=https://open.feishu.cn/open-apis
 ```
@@ -655,7 +667,9 @@ RelayX 回调地址：
 POST /feishu/events
 ```
 
-RelayX 会处理飞书的 callback URL verification。请将 `FEISHU_VERIFICATION_TOKEN` 配置为与飞书应用后台里的 verification token 一致。
+`FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 足够用于飞书 OpenAPI 访问和外发消息。
+`FEISHU_VERIFICATION_TOKEN` 是可选项；配置后 RelayX 会校验飞书回调里的 token，
+不配置时 RelayX 会跳过这项 token 校验。
 
 消息链路：
 
@@ -861,7 +875,7 @@ relayx parse "/codex start repo=/tmp/demo fix bug"
 
 - 确认飞书事件订阅包含 `im.message.receive_v1` 和 `card.action.trigger`。
 - 确认 callback URL 指向 `/feishu/events`。
-- 确认 `FEISHU_VERIFICATION_TOKEN` 与飞书应用设置一致。
+- 如果配置了 `FEISHU_VERIFICATION_TOKEN`，确认它与飞书应用设置一致。
 - 确认内网穿透或反向代理可以访问 `RELAYX_LISTEN_ADDR`。
 
 如果飞书发送失败：

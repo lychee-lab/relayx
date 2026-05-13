@@ -174,9 +174,11 @@ RELAYX_AUDIT_LOG=$AUDIT_FILE
 # RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
 # RELAYX_ALLOWED_REPOS=/path/to/repo-a,/path/to/repo-b
 
-# Feishu OpenAPI / callback settings:
+# Feishu OpenAPI settings:
 # FEISHU_APP_ID=cli_xxx
 # FEISHU_APP_SECRET=xxx
+
+# Optional callback verification:
 # FEISHU_VERIFICATION_TOKEN=xxx
 EOF
   chmod 0600 "$ENV_FILE"
@@ -218,4 +220,3 @@ main() {
 }
 
 main "$@"
-
