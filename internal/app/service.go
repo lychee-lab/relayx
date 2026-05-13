@@ -138,6 +138,8 @@ func (s *Service) HandleMessage(ctx context.Context, msg InboundMessage) (Reply,
 		return Reply{}, fmt.Errorf("user_id is required")
 	}
 
+	_ = s.audit(ctx, msg.UserID, "message.received", msg.ChatID, map[string]any{"text": core.RedactSecrets(msg.Text)})
+
 	cmd, err := core.ParseCommand(msg.Text)
 	if err != nil {
 		return Reply{}, err

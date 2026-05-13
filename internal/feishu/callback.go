@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"strings"
 
 	"github.com/lychee-lab/relayx/internal/app"
 	"github.com/lychee-lab/relayx/internal/codex"
+	"github.com/lychee-lab/relayx/internal/core"
 )
 
 type CallbackHandler struct {
@@ -66,15 +69,34 @@ func (h CallbackHandler) handleMessage(w http.ResponseWriter, ctx context.Contex
 		),
 		Text: extractMessageText(nestedString(envelope, "event", "message", "content")),
 	}
+	log.Printf("feishu message received chat_id=%q user_id=%q text=%q", msg.ChatID, msg.UserID, core.RedactSecrets(msg.Text))
 	reply, err := h.Service.HandleMessage(ctx, msg)
 	if err != nil {
+		log.Printf("feishu message handle error chat_id=%q user_id=%q: %v", msg.ChatID, msg.UserID, err)
+		h.sendMessageError(ctx, msg, err)
 		writeJSON(w, http.StatusOK, map[string]any{"code": 1, "msg": err.Error()})
 		return
 	}
 	if h.Notifier != nil && reply.Text != "" {
-		_ = h.Notifier.SendMessage(ctx, msg.ChatID, reply.Text)
+		if err := h.Notifier.SendMessage(ctx, msg.ChatID, reply.Text); err != nil {
+			log.Printf("feishu send message failed chat_id=%q: %v", msg.ChatID, err)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": 0, "msg": "ok", "reply": reply.Text})
+}
+
+func (h CallbackHandler) sendMessageError(ctx context.Context, msg app.InboundMessage, err error) {
+	if h.Notifier == nil || msg.ChatID == "" {
+		return
+	}
+
+	text := fmt.Sprintf("RelayX error: %s", err)
+	if !strings.HasPrefix(strings.TrimSpace(msg.Text), "/codex") {
+		text = "RelayX only handles /codex commands. Send /codex help for usage."
+	}
+	if sendErr := h.Notifier.SendMessage(ctx, msg.ChatID, text); sendErr != nil {
+		log.Printf("feishu send error message failed chat_id=%q: %v", msg.ChatID, sendErr)
+	}
 }
 
 func (h CallbackHandler) handleCardAction(w http.ResponseWriter, ctx context.Context, envelope map[string]any) {
@@ -95,7 +117,9 @@ func (h CallbackHandler) handleCardAction(w http.ResponseWriter, ctx context.Con
 	}
 	if h.Notifier != nil && reply.Text != "" && reply.Approval != nil {
 		if task, ok := h.Service.TaskByID(reply.Approval.TaskID); ok {
-			_ = h.Notifier.SendMessage(ctx, task.ChatID, reply.Text)
+			if err := h.Notifier.SendMessage(ctx, task.ChatID, reply.Text); err != nil {
+				log.Printf("feishu send approval result failed chat_id=%q: %v", task.ChatID, err)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": 0, "msg": "ok", "toast": reply.Text})
