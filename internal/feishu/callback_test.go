@@ -81,6 +81,39 @@ func TestCallbackMessageCreatesTask(t *testing.T) {
 	}
 }
 
+func TestCallbackMessageErrorIsVisible(t *testing.T) {
+	notifier := &callbackNotifier{}
+	service := app.NewService(core.NewTaskManager())
+	handler := CallbackHandler{
+		Service:           service,
+		Notifier:          notifier,
+		VerificationToken: "verify-token",
+	}
+	req := callbackRequest(map[string]any{
+		"header": map[string]any{"event_type": "im.message.receive_v1", "token": "verify-token"},
+		"event": map[string]any{
+			"sender": map[string]any{"sender_id": map[string]any{"open_id": "ou_1"}},
+			"message": map[string]any{
+				"chat_id": "oc_1",
+				"content": `{"text":"hello"}`,
+			},
+		},
+	})
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if len(notifier.messages) != 1 || !strings.Contains(notifier.messages[0], "/codex help") {
+		t.Fatalf("messages = %#v", notifier.messages)
+	}
+	if !strings.Contains(rec.Body.String(), "command must start with /codex") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestCallbackCardActionResolvesApproval(t *testing.T) {
 	tasks := core.NewTaskManager()
 	task, err := tasks.Start("oc_1", "ou_1", "/tmp/demo", "fix bug", "", "")

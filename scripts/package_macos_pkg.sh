@@ -22,7 +22,7 @@ The package installs:
   /usr/local/bin/relayx
   /usr/local/share/relayx/README.md
   /usr/local/share/relayx/LICENSE
-  /usr/local/share/relayx/relayx.env.example
+  /usr/local/share/relayx/config.toml.example
   /usr/local/share/relayx/install-from-source.sh
   /usr/local/share/relayx/uninstall.sh
 EOF
@@ -161,44 +161,83 @@ printf 'Uninstalled %s from /usr/local/bin\\n' "$APP_NAME"
 EOF
 chmod 0755 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/uninstall.sh"
 
-cat >"$PAYLOAD_DIR/usr/local/share/$APP_NAME/relayx.env.example" <<'EOF'
+cat >"$PAYLOAD_DIR/usr/local/share/$APP_NAME/config.toml.example" <<'EOF'
 # relayx runtime configuration.
 # Copy this file to a user-owned location before editing, for example:
-#   cp /usr/local/share/relayx/relayx.env.example ~/.config/relayx/relayx.env
+#   mkdir -p ~/.relayx
+#   cp /usr/local/share/relayx/config.toml.example ~/.relayx/config.toml
 
-RELAYX_LISTEN_ADDR=127.0.0.1:8787
-RELAYX_CODEX_MODE=disabled
-RELAYX_CODEX_BIN=codex
-RELAYX_DB=$HOME/.local/state/relayx/state.json
-RELAYX_AUDIT_LOG=$HOME/.local/state/relayx/audit.jsonl
+listen_addr = "127.0.0.1:8787"
+codex_mode = "disabled"
+codex_bin = "codex"
+runtime_dir = "~/.relayx/run"
+db = "~/.relayx/state.json"
+audit_log = "~/.relayx/logs/audit.jsonl"
 
-# Optional safety controls:
-# RELAYX_AUTHORIZED_USERS=ou_xxx,ou_yyy
-# RELAYX_ALLOWED_REPOS=/path/to/repo-a,/path/to/repo-b
+authorized_users = []
+allowed_repos = []
 
-# Feishu OpenAPI / callback settings:
-# FEISHU_APP_ID=cli_xxx
-# FEISHU_APP_SECRET=xxx
-# FEISHU_VERIFICATION_TOKEN=xxx
+[feishu]
+app_id = ""
+app_secret = ""
+receive_mode = "long_connection"
+base_url = "https://open.feishu.cn/open-apis"
+verification_token = ""
 EOF
-chmod 0644 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/relayx.env.example"
+chmod 0644 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/config.toml.example"
 
 cat >"$SCRIPTS_DIR/postinstall" <<'EOF'
 #!/bin/bash
 set -e
 
+APP_NAME="relayx"
+TEMPLATE="/usr/local/share/$APP_NAME/config.toml.example"
+
 chmod 0755 /usr/local/bin/relayx
+
+console_user="$(stat -f %Su /dev/console 2>/dev/null || true)"
+user_home=""
+user_config=""
+
+if [ -n "$console_user" ] && [ "$console_user" != "root" ] && [ "$console_user" != "loginwindow" ]; then
+  user_home="$(dscl . -read "/Users/$console_user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  if [ -n "$user_home" ] && [ -d "$user_home" ]; then
+    relayx_home="$user_home/.relayx"
+    user_config="$relayx_home/config.toml"
+
+    mkdir -p "$relayx_home/run" "$relayx_home/logs"
+    if [ ! -f "$user_config" ]; then
+      cp "$TEMPLATE" "$user_config"
+      chmod 0600 "$user_config"
+    fi
+    chown -R "$console_user" "$relayx_home" 2>/dev/null || true
+  fi
+fi
 
 cat <<'MSG'
 relayx has been installed to /usr/local/bin/relayx.
 
 Runtime config template:
-  /usr/local/share/relayx/relayx.env.example
+  /usr/local/share/relayx/config.toml.example
+MSG
 
+if [ -n "$user_config" ]; then
+  printf 'User config:\n  %s\n\n' "$user_config"
+else
+  cat <<'MSG'
+User config was not created automatically because no active console user was detected.
+Create it manually with:
+  mkdir -p ~/.relayx
+  cp /usr/local/share/relayx/config.toml.example ~/.relayx/config.toml
+
+MSG
+fi
+
+cat <<'MSG'
 Uninstall:
   sudo /usr/local/share/relayx/uninstall.sh
 
-Codex CLI is required when RELAYX_CODEX_MODE=app-server.
+Codex CLI is required when codex_mode = "app-server".
 If codex is missing, install it before starting relayx.
 MSG
 

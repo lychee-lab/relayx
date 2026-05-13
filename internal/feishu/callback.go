@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/lychee-lab/relayx/internal/app"
@@ -66,13 +67,10 @@ func (h CallbackHandler) handleMessage(w http.ResponseWriter, ctx context.Contex
 		),
 		Text: extractMessageText(nestedString(envelope, "event", "message", "content")),
 	}
-	reply, err := h.Service.HandleMessage(ctx, msg)
+	reply, err := HandleInboundMessage(ctx, h.Service, h.Notifier, msg)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"code": 1, "msg": err.Error()})
 		return
-	}
-	if h.Notifier != nil && reply.Text != "" {
-		_ = h.Notifier.SendMessage(ctx, msg.ChatID, reply.Text)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": 0, "msg": "ok", "reply": reply.Text})
 }
@@ -101,7 +99,9 @@ func (h CallbackHandler) handleCardAction(w http.ResponseWriter, ctx context.Con
 	}
 	if h.Notifier != nil && reply.Text != "" && reply.Approval != nil {
 		if task, ok := h.Service.TaskByID(reply.Approval.TaskID); ok {
-			_ = h.Notifier.SendMessage(ctx, task.ChatID, reply.Text)
+			if err := h.Notifier.SendMessage(ctx, task.ChatID, reply.Text); err != nil {
+				log.Printf("feishu send approval result failed chat_id=%q: %v", task.ChatID, err)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": 0, "msg": "ok", "toast": reply.Text})

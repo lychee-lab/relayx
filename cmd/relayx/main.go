@@ -33,10 +33,12 @@ func run(args []string) error {
 		return usage()
 	}
 
-	cfg := config.LoadFromEnv()
-
 	switch args[0] {
 	case "check":
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
 		return printJSON(cfg.Summary())
 	case "parse":
 		if len(args) < 2 {
@@ -48,6 +50,10 @@ func run(args []string) error {
 		}
 		return printJSON(cmd)
 	case "serve":
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
 		return serve(cfg)
 	case "help", "-h", "--help":
 		return usage()
@@ -117,6 +123,24 @@ func serve(cfg config.Config) error {
 	)
 	go service.Run(ctx)
 
+	if cfg.FeishuConfigured && feishuLongConnectionEnabled(cfg.FeishuReceiveMode) {
+		receiver := feishu.WSReceiver{
+			AppID:             cfg.FeishuAppID,
+			AppSecret:         cfg.FeishuAppSecret,
+			BaseURL:           cfg.FeishuBaseURL,
+			VerificationToken: cfg.FeishuVerifyToken,
+			Service:           service,
+			Notifier:          notifier,
+		}
+		go func() {
+			if err := receiver.Start(ctx); err != nil {
+				log.Printf("feishu long connection receiver stopped: %v", err)
+			}
+		}()
+	} else if cfg.FeishuConfigured {
+		log.Printf("feishu long connection receiver disabled receive_mode=%s", cfg.FeishuReceiveMode)
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           httpapi.NewHandler(service, notifier, cfg.FeishuVerifyToken),
@@ -139,6 +163,15 @@ func serve(cfg config.Config) error {
 			return nil
 		}
 		return err
+	}
+}
+
+func feishuLongConnectionEnabled(mode string) bool {
+	switch mode {
+	case "long_connection", "both":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -121,13 +121,15 @@ codex app-server
 
 当前实现：
 
+- 已实现飞书 SDK 长连接 receiver。
+- 长连接模式支持 `im.message.receive_v1` 和 `card.action.trigger`。
 - 已实现 HTTP callback receiver：`POST /feishu/events`。
 - 支持 URL verification、`im.message.receive_v1` 和 `card.action.trigger`。
-- 本地无公网 IP 时，可用内网穿透或云 relay 将该 callback 转发到本机。
+- HTTP callback 作为可选模式保留；本地无公网 IP 时，默认应使用长连接模式，不需要回调域名或内网穿透。
 
 推荐生产订阅方式：
 
-- 优先使用飞书 SDK 长连接。
+- 默认使用飞书 SDK 长连接。
 - 本地服务只需能访问公网，不需要公网 IP、域名或内网穿透。
 - 长连接模式下，如果同一应用启动多个 client，事件是集群随机投递，不是广播，所以生产环境同一个 Feishu App 只运行一个 active receiver，或用分布式锁保证单活。
 
@@ -201,8 +203,8 @@ running -> stopped
 
 当前持久化设计：
 
-- `RELAYX_DB` 指向 JSON state snapshot，保存 task、thread、turn、approval 的可恢复状态。
-- `RELAYX_AUDIT_LOG` 指向 JSONL audit log，逐行记录用户输入、审批决策和关键控制动作。
+- `~/.relayx/state.json` 是默认 JSON state snapshot，保存 task、thread、turn、approval 的可恢复状态。
+- `~/.relayx/logs/audit.jsonl` 是默认 JSONL audit log，逐行记录用户输入、审批决策和关键控制动作。
 - `core.Snapshot` 与 `persist.FileStateStore` 是持久化边界，后续如果需要强事务和查询能力，可在该边界下替换为 SQLite。
 
 ## 9. 策略与安全
@@ -291,8 +293,8 @@ macOS 生产：
 
 - 打包单二进制。
 - 用 launchd 常驻。
-- `RELAYX_RUNTIME_DIR` 放 socket。
-- `RELAYX_DB` 放状态快照。
+- `~/.relayx/run` 放 socket 或运行时文件。
+- `~/.relayx/state.json` 放状态快照。
 
 Linux 生产：
 
@@ -336,7 +338,7 @@ M4：飞书长连接接收。
 - `im.message.receive_v1`。
 - `card.action.trigger`。
 - 回调幂等和 3 秒 ack。
-- 状态：已完成 HTTP callback receiver；长连接 receiver 可作为同一 service 的替代输入适配器接入。
+- 状态：已完成长连接 receiver；HTTP callback receiver 作为可选接收模式保留。
 
 M5：审批闭环。
 
