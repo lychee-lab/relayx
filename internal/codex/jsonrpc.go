@@ -102,13 +102,21 @@ func (a *JSONRPCAdapter) StartThread(ctx context.Context, req StartThreadRequest
 }
 
 func (a *JSONRPCAdapter) StartTurn(ctx context.Context, req StartTurnRequest) (TurnID, error) {
-	var out map[string]any
-	if err := a.call(ctx, "turn/start", map[string]any{
+	params := map[string]any{
 		"threadId": string(req.ThreadID),
 		"input": []map[string]any{
 			{"type": "text", "text": req.Text},
 		},
-	}, &out); err != nil {
+	}
+	if req.Model != "" {
+		params["model"] = req.Model
+	}
+	if req.Effort != "" {
+		params["effort"] = req.Effort
+	}
+
+	var out map[string]any
+	if err := a.call(ctx, "turn/start", params, &out); err != nil {
 		return "", err
 	}
 
@@ -120,6 +128,129 @@ func (a *JSONRPCAdapter) StartTurn(ctx context.Context, req StartTurnRequest) (T
 		return "", fmt.Errorf("turn/start response missing turn id")
 	}
 	return TurnID(id), nil
+}
+
+func (a *JSONRPCAdapter) StartReview(ctx context.Context, req StartReviewRequest) (StartReviewResponse, error) {
+	params := map[string]any{
+		"threadId": string(req.ThreadID),
+		"target":   reviewTargetParam(req.Target),
+	}
+	if req.Delivery != "" {
+		params["delivery"] = req.Delivery
+	}
+
+	var out map[string]any
+	if err := a.call(ctx, "review/start", params, &out); err != nil {
+		return StartReviewResponse{}, err
+	}
+
+	resp := StartReviewResponse{
+		ReviewThreadID: ThreadID(extractString(out, "reviewThreadId")),
+		TurnID:         TurnID(extractString(out, "turn", "id")),
+	}
+	return resp, nil
+}
+
+func (a *JSONRPCAdapter) ListModels(ctx context.Context) ([]ModelInfo, error) {
+	var out struct {
+		Data []struct {
+			ID                     string `json:"id"`
+			Model                  string `json:"model"`
+			DisplayName            string `json:"displayName"`
+			DefaultReasoningEffort string `json:"defaultReasoningEffort"`
+			Hidden                 bool   `json:"hidden"`
+			SupportedEfforts       []struct {
+				ReasoningEffort string `json:"reasoningEffort"`
+			} `json:"supportedReasoningEfforts"`
+		} `json:"data"`
+	}
+	if err := a.call(ctx, "model/list", map[string]any{"includeHidden": false}, &out); err != nil {
+		return nil, err
+	}
+
+	models := make([]ModelInfo, 0, len(out.Data))
+	for _, item := range out.Data {
+		model := ModelInfo{
+			ID:                     item.ID,
+			Model:                  item.Model,
+			DisplayName:            item.DisplayName,
+			DefaultReasoningEffort: item.DefaultReasoningEffort,
+			Hidden:                 item.Hidden,
+			SupportedEfforts:       make([]string, 0, len(item.SupportedEfforts)),
+		}
+		for _, effort := range item.SupportedEfforts {
+			if effort.ReasoningEffort != "" {
+				model.SupportedEfforts = append(model.SupportedEfforts, effort.ReasoningEffort)
+			}
+		}
+		models = append(models, model)
+	}
+	return models, nil
+}
+
+func (a *JSONRPCAdapter) ListThreads(ctx context.Context, req ListThreadsRequest) ([]ThreadInfo, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 5
+	}
+	params := map[string]any{
+		"limit":         limit,
+		"sortKey":       "updated_at",
+		"sortDirection": "desc",
+		"archived":      false,
+	}
+	if req.CWD != "" {
+		params["cwd"] = req.CWD
+	}
+
+	var out struct {
+		Data []threadDTO `json:"data"`
+	}
+	if err := a.call(ctx, "thread/list", params, &out); err != nil {
+		return nil, err
+	}
+
+	threads := make([]ThreadInfo, 0, len(out.Data))
+	for _, thread := range out.Data {
+		threads = append(threads, thread.toInfo())
+	}
+	return threads, nil
+}
+
+func (a *JSONRPCAdapter) ResumeThread(ctx context.Context, req ResumeThreadRequest) (ResumeThreadResponse, error) {
+	params := map[string]any{
+		"threadId": string(req.ThreadID),
+		"sandbox":  defaultString(req.Sandbox, "workspace-write"),
+	}
+	if req.Model != "" {
+		params["model"] = req.Model
+	}
+	if req.Effort != "" {
+		params["config"] = map[string]any{"model_reasoning_effort": req.Effort}
+	}
+	if req.ApprovalPolicy != "" {
+		params["approvalPolicy"] = req.ApprovalPolicy
+	}
+
+	var out struct {
+		Thread        threadDTO `json:"thread"`
+		Model         string    `json:"model"`
+		ModelProvider string    `json:"modelProvider"`
+		CWD           string    `json:"cwd"`
+		Effort        string    `json:"reasoningEffort"`
+	}
+	if err := a.call(ctx, "thread/resume", params, &out); err != nil {
+		return ResumeThreadResponse{}, err
+	}
+
+	resp := ResumeThreadResponse{
+		Thread:        out.Thread.toInfo(),
+		Model:         out.Model,
+		ModelProvider: out.ModelProvider,
+		CWD:           firstNonEmpty(out.CWD, out.Thread.CWD),
+		Effort:        out.Effort,
+	}
+	return resp, nil
 }
 
 func (a *JSONRPCAdapter) SteerTurn(ctx context.Context, threadID ThreadID, turnID TurnID, text string) error {
@@ -512,4 +643,48 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func reviewTargetParam(target ReviewTarget) map[string]any {
+	switch target.Type {
+	case "baseBranch":
+		return map[string]any{"type": "baseBranch", "branch": target.Branch}
+	case "commit":
+		return map[string]any{"type": "commit", "sha": target.CommitSHA, "title": nil}
+	case "custom":
+		return map[string]any{"type": "custom", "instructions": target.Instructions}
+	default:
+		return map[string]any{"type": "uncommittedChanges"}
+	}
+}
+
+type threadDTO struct {
+	ID            string `json:"id"`
+	SessionID     string `json:"sessionId"`
+	Name          string `json:"name"`
+	Preview       string `json:"preview"`
+	CWD           string `json:"cwd"`
+	ModelProvider string `json:"modelProvider"`
+	UpdatedAt     int64  `json:"updatedAt"`
+}
+
+func (t threadDTO) toInfo() ThreadInfo {
+	return ThreadInfo{
+		ID:            t.ID,
+		SessionID:     t.SessionID,
+		Name:          t.Name,
+		Preview:       t.Preview,
+		CWD:           t.CWD,
+		ModelProvider: t.ModelProvider,
+		UpdatedAt:     t.UpdatedAt,
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

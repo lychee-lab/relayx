@@ -43,6 +43,13 @@ func (n Notifier) SendApproval(ctx context.Context, chatID string, approval core
 	return n.Client.SendApproval(ctx, chatID, approval)
 }
 
+func (n Notifier) SendResumeOptions(ctx context.Context, chatID string, options []core.ResumeOption) error {
+	if n.Client == nil {
+		return fmt.Errorf("feishu client is nil")
+	}
+	return n.Client.SendResumeOptions(ctx, chatID, options)
+}
+
 func (c *Client) SendMessage(ctx context.Context, msg Message) error {
 	if msg.ChatID == "" {
 		return fmt.Errorf("chat id is required")
@@ -66,6 +73,18 @@ func (c *Client) SendApprovalCard(ctx context.Context, card ApprovalCard) error 
 	return c.sendMessage(ctx, card.ChatID, "interactive", string(content))
 }
 
+func (c *Client) SendResumeCard(ctx context.Context, card ResumeCard) error {
+	if card.ChatID == "" {
+		return fmt.Errorf("chat id is required")
+	}
+	payload := resumeCardPayload(card)
+	content, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return c.sendMessage(ctx, card.ChatID, "interactive", string(content))
+}
+
 func (c *Client) SendText(ctx context.Context, chatID string, text string) error {
 	return c.SendMessage(ctx, Message{ChatID: chatID, Text: text})
 }
@@ -77,6 +96,13 @@ func (c *Client) SendApproval(ctx context.Context, chatID string, approval core.
 		Title:      "Codex approval required",
 		Summary:    approval.Summary,
 		Actions:    []string{"approved", "approved_for_session", "denied", "abort"},
+	})
+}
+
+func (c *Client) SendResumeOptions(ctx context.Context, chatID string, options []core.ResumeOption) error {
+	return c.SendResumeCard(ctx, ResumeCard{
+		ChatID:  chatID,
+		Options: options,
 	})
 }
 
@@ -229,6 +255,51 @@ func approvalCardPayload(card ApprovalCard) map[string]any {
 	}
 }
 
+func resumeCardPayload(card ResumeCard) map[string]any {
+	elements := []map[string]any{
+		{
+			"tag":     "div",
+			"content": "**选择要恢复的 Codex session**",
+		},
+	}
+	limit := len(card.Options)
+	if limit > 10 {
+		limit = 10
+	}
+	for i := 0; i < limit; i++ {
+		option := card.Options[i]
+		title := firstNonEmpty(option.Title, option.Preview, option.ThreadID)
+		summary := fmt.Sprintf("**%s**\n%s", core.RedactSecrets(truncate(title, 80)), core.RedactSecrets(option.CWD))
+		elements = append(elements,
+			map[string]any{
+				"tag":     "div",
+				"content": summary,
+			},
+			map[string]any{
+				"tag": "button",
+				"text": map[string]any{
+					"tag":     "plain_text",
+					"content": fmt.Sprintf("恢复 %d", i+1),
+				},
+				"type": "primary",
+				"value": map[string]string{
+					"action":    "resume_thread",
+					"chat_id":   card.ChatID,
+					"thread_id": option.ThreadID,
+					"cwd":       option.CWD,
+				},
+			},
+		)
+	}
+	return map[string]any{
+		"config": map[string]any{"wide_screen_mode": true},
+		"header": map[string]any{
+			"title": map[string]any{"tag": "plain_text", "content": "Codex resume"},
+		},
+		"elements": elements,
+	}
+}
+
 func actionLabel(action string) string {
 	switch action {
 	case "approved":
@@ -251,4 +322,14 @@ func buttonType(action string) string {
 	default:
 		return "primary"
 	}
+}
+
+func truncate(value string, max int) string {
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return value[:max-3] + "..."
 }

@@ -1,6 +1,10 @@
 package feishu
 
-import "context"
+import (
+	"context"
+
+	"github.com/lychee-lab/relayx/internal/core"
+)
 
 type InboundMessage struct {
 	ChatID string
@@ -26,6 +30,11 @@ type ApprovalCard struct {
 	Title      string
 	Summary    string
 	Actions    []string
+}
+
+type ResumeCard struct {
+	ChatID  string
+	Options []core.ResumeOption
 }
 
 type Adapter interface {

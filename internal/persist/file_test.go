@@ -17,7 +17,7 @@ func TestFileStateStoreRoundTrip(t *testing.T) {
 	store := &FileStateStore{Path: path}
 
 	tasks := core.NewTaskManager()
-	task, err := tasks.Start("oc_1", "ou_1", "/tmp/demo", "fix bug")
+	task, err := tasks.Start("oc_1", "ou_1", "/tmp/demo", "fix bug", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

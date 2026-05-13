@@ -13,6 +13,10 @@ import (
 type fakeCodexAdapter struct {
 	events           chan codex.Event
 	approvals        chan codex.ApprovalRequest
+	startThreadReq   codex.StartThreadRequest
+	startTurnReq     codex.StartTurnRequest
+	reviewReq        codex.StartReviewRequest
+	resumeReq        codex.ResumeThreadRequest
 	steerText        string
 	approvalID       string
 	approvalDecision codex.ApprovalDecision
@@ -26,11 +30,17 @@ func newFakeCodexAdapter() *fakeCodexAdapter {
 	}
 }
 
-func (f *fakeCodexAdapter) StartThread(context.Context, codex.StartThreadRequest) (codex.ThreadID, error) {
+func (f *fakeCodexAdapter) StartThread(_ context.Context, req codex.StartThreadRequest) (codex.ThreadID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.startThreadReq = req
 	return "thread-1", nil
 }
 
-func (f *fakeCodexAdapter) StartTurn(context.Context, codex.StartTurnRequest) (codex.TurnID, error) {
+func (f *fakeCodexAdapter) StartTurn(_ context.Context, req codex.StartTurnRequest) (codex.TurnID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.startTurnReq = req
 	return "turn-1", nil
 }
 
@@ -47,6 +57,37 @@ func (f *fakeCodexAdapter) RespondApproval(_ context.Context, approvalID string,
 	f.approvalID = approvalID
 	f.approvalDecision = decision
 	return nil
+}
+
+func (f *fakeCodexAdapter) StartReview(_ context.Context, req codex.StartReviewRequest) (codex.StartReviewResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reviewReq = req
+	return codex.StartReviewResponse{ReviewThreadID: req.ThreadID, TurnID: "review-turn-1"}, nil
+}
+
+func (f *fakeCodexAdapter) ListModels(context.Context) ([]codex.ModelInfo, error) {
+	return []codex.ModelInfo{
+		{ID: "gpt-5.2", Model: "gpt-5.2", DisplayName: "GPT-5.2", DefaultReasoningEffort: "medium"},
+	}, nil
+}
+
+func (f *fakeCodexAdapter) ListThreads(context.Context, codex.ListThreadsRequest) ([]codex.ThreadInfo, error) {
+	return []codex.ThreadInfo{
+		{ID: "thread-resume-1", Name: "Fix failing test", Preview: "fix bug", CWD: "/tmp/demo", ModelProvider: "openai", UpdatedAt: 123},
+	}, nil
+}
+
+func (f *fakeCodexAdapter) ResumeThread(_ context.Context, req codex.ResumeThreadRequest) (codex.ResumeThreadResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumeReq = req
+	return codex.ResumeThreadResponse{
+		Thread: codex.ThreadInfo{ID: string(req.ThreadID), Name: "Fix failing test", Preview: "fix bug", CWD: "/tmp/demo", ModelProvider: "openai"},
+		Model:  "gpt-5.2",
+		CWD:    "/tmp/demo",
+		Effort: "medium",
+	}, nil
 }
 
 func (f *fakeCodexAdapter) Events() <-chan codex.Event {
@@ -67,6 +108,7 @@ type fakeNotifier struct {
 	mu        sync.Mutex
 	messages  []string
 	approvals []core.Approval
+	resumes   [][]core.ResumeOption
 }
 
 func (f *fakeNotifier) SendMessage(_ context.Context, _ string, text string) error {
@@ -80,6 +122,13 @@ func (f *fakeNotifier) SendApproval(_ context.Context, _ string, approval core.A
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.approvals = append(f.approvals, approval)
+	return nil
+}
+
+func (f *fakeNotifier) SendResumeOptions(_ context.Context, _ string, options []core.ResumeOption) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumes = append(f.resumes, append([]core.ResumeOption(nil), options...))
 	return nil
 }
 
@@ -167,6 +216,111 @@ func TestServiceHandlesCodexCompletionEvent(t *testing.T) {
 		task, ok := service.TaskByID(reply.Task.ID)
 		return ok && task.Status == core.TaskCompleted
 	})
+}
+
+func TestServiceAppliesModelOptionsToFutureTurn(t *testing.T) {
+	fakeCodex := newFakeCodexAdapter()
+	service := NewService(core.NewTaskManager(), WithCodex(fakeCodex))
+
+	ctx := context.Background()
+	start, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/codex start repo=/tmp/demo fix bug",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/model gpt-5.2 effort=high",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/fast",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.tasks.SetStatus(start.Task.ID, core.TaskCompleted, "turn/completed", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/codex steer continue",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeCodex.mu.Lock()
+	defer fakeCodex.mu.Unlock()
+	if fakeCodex.startTurnReq.Model != "gpt-5.2" || fakeCodex.startTurnReq.Effort != "low" {
+		t.Fatalf("start turn req = %#v", fakeCodex.startTurnReq)
+	}
+}
+
+func TestServiceStartsReview(t *testing.T) {
+	fakeCodex := newFakeCodexAdapter()
+	service := NewService(core.NewTaskManager(), WithCodex(fakeCodex))
+
+	ctx := context.Background()
+	if _, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/codex start repo=/tmp/demo fix bug",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/review base=main detached",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeCodex.mu.Lock()
+	defer fakeCodex.mu.Unlock()
+	if fakeCodex.reviewReq.Target.Type != "baseBranch" || fakeCodex.reviewReq.Target.Branch != "main" || fakeCodex.reviewReq.Delivery != "detached" {
+		t.Fatalf("review req = %#v", fakeCodex.reviewReq)
+	}
+}
+
+func TestServiceListsAndResumesCodexThread(t *testing.T) {
+	fakeCodex := newFakeCodexAdapter()
+	notifier := &fakeNotifier{}
+	service := NewService(core.NewTaskManager(), WithCodex(fakeCodex), WithNotifier(notifier))
+
+	ctx := context.Background()
+	reply, err := service.HandleMessage(ctx, InboundMessage{
+		ChatID: "oc_1",
+		UserID: "ou_1",
+		Text:   "/resume",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.Text != "sent 1 resumable Codex sessions" {
+		t.Fatalf("reply = %#v", reply)
+	}
+	notifier.mu.Lock()
+	resumes := len(notifier.resumes)
+	notifier.mu.Unlock()
+	if resumes != 1 {
+		t.Fatalf("resume cards = %d", resumes)
+	}
+
+	resumed, err := service.HandleResumeSelection(ctx, "ou_1", "oc_1", "thread-resume-1", "/tmp/demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Task == nil || resumed.Task.ThreadID != "thread-resume-1" || resumed.Task.Status != core.TaskResumed {
+		t.Fatalf("resumed task = %#v", resumed.Task)
+	}
 }
 
 func waitFor(t *testing.T, cond func() bool) {

@@ -78,6 +78,12 @@ func (h CallbackHandler) handleMessage(w http.ResponseWriter, ctx context.Contex
 }
 
 func (h CallbackHandler) handleCardAction(w http.ResponseWriter, ctx context.Context, envelope map[string]any) {
+	action := nestedString(envelope, "event", "action", "value", "action")
+	if action == "resume_thread" {
+		h.handleResumeAction(w, ctx, envelope)
+		return
+	}
+
 	approvalID := nestedString(envelope, "event", "action", "value", "approval_id")
 	decision := codex.ApprovalDecision(nestedString(envelope, "event", "action", "value", "decision"))
 	userID := firstNonEmpty(
@@ -97,6 +103,29 @@ func (h CallbackHandler) handleCardAction(w http.ResponseWriter, ctx context.Con
 		if task, ok := h.Service.TaskByID(reply.Approval.TaskID); ok {
 			_ = h.Notifier.SendMessage(ctx, task.ChatID, reply.Text)
 		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"code": 0, "msg": "ok", "toast": reply.Text})
+}
+
+func (h CallbackHandler) handleResumeAction(w http.ResponseWriter, ctx context.Context, envelope map[string]any) {
+	threadID := nestedString(envelope, "event", "action", "value", "thread_id")
+	chatID := nestedString(envelope, "event", "action", "value", "chat_id")
+	cwd := nestedString(envelope, "event", "action", "value", "cwd")
+	userID := firstNonEmpty(
+		nestedString(envelope, "event", "operator", "operator_id", "open_id"),
+		nestedString(envelope, "event", "operator", "operator_id", "user_id"),
+	)
+	if threadID == "" || chatID == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"code": 1, "msg": "thread_id and chat_id are required"})
+		return
+	}
+	reply, err := h.Service.HandleResumeSelection(ctx, userID, chatID, threadID, cwd)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"code": 1, "msg": err.Error()})
+		return
+	}
+	if h.Notifier != nil && reply.Text != "" {
+		_ = h.Notifier.SendMessage(ctx, chatID, reply.Text)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": 0, "msg": "ok", "toast": reply.Text})
 }

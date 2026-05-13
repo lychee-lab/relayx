@@ -105,6 +105,22 @@ func (f *e2eCodex) SteerTurn(context.Context, codex.ThreadID, codex.TurnID, stri
 	return nil
 }
 
+func (f *e2eCodex) StartReview(context.Context, codex.StartReviewRequest) (codex.StartReviewResponse, error) {
+	return codex.StartReviewResponse{ReviewThreadID: "thread-1", TurnID: "review-turn-1"}, nil
+}
+
+func (f *e2eCodex) ListModels(context.Context) ([]codex.ModelInfo, error) {
+	return nil, nil
+}
+
+func (f *e2eCodex) ListThreads(context.Context, codex.ListThreadsRequest) ([]codex.ThreadInfo, error) {
+	return []codex.ThreadInfo{{ID: "thread-1", Name: "demo", CWD: "/tmp/demo"}}, nil
+}
+
+func (f *e2eCodex) ResumeThread(context.Context, codex.ResumeThreadRequest) (codex.ResumeThreadResponse, error) {
+	return codex.ResumeThreadResponse{Thread: codex.ThreadInfo{ID: "thread-1", Name: "demo", CWD: "/tmp/demo"}, CWD: "/tmp/demo"}, nil
+}
+
 func (f *e2eCodex) RespondApproval(_ context.Context, approvalID string, decision codex.ApprovalDecision) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -131,6 +147,7 @@ type e2eNotifier struct {
 	mu        sync.Mutex
 	messages  []string
 	approvals []core.Approval
+	resumes   [][]core.ResumeOption
 }
 
 func (n *e2eNotifier) SendMessage(context.Context, string, string) error {
@@ -144,6 +161,13 @@ func (n *e2eNotifier) SendApproval(_ context.Context, _ string, approval core.Ap
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.approvals = append(n.approvals, approval)
+	return nil
+}
+
+func (n *e2eNotifier) SendResumeOptions(_ context.Context, _ string, options []core.ResumeOption) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.resumes = append(n.resumes, options)
 	return nil
 }
 

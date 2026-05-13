@@ -11,6 +11,7 @@ type TaskStatus string
 const (
 	TaskCreated         TaskStatus = "created"
 	TaskRunning         TaskStatus = "running"
+	TaskResumed         TaskStatus = "resumed"
 	TaskWaitingApproval TaskStatus = "waiting_approval"
 	TaskCompleted       TaskStatus = "completed"
 	TaskFailed          TaskStatus = "failed"
@@ -23,6 +24,8 @@ type Task struct {
 	UserID       string     `json:"user_id"`
 	Repo         string     `json:"repo"`
 	Prompt       string     `json:"prompt"`
+	Model        string     `json:"model,omitempty"`
+	Effort       string     `json:"effort,omitempty"`
 	ThreadID     string     `json:"thread_id,omitempty"`
 	TurnID       string     `json:"turn_id,omitempty"`
 	Instructions []string   `json:"instructions,omitempty"`
@@ -56,6 +59,21 @@ type Approval struct {
 	ResolvedAt *time.Time     `json:"resolved_at,omitempty"`
 }
 
+type ChatSettings struct {
+	ChatID string `json:"chat_id"`
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+}
+
+type ResumeOption struct {
+	ThreadID      string `json:"thread_id"`
+	Title         string `json:"title,omitempty"`
+	Preview       string `json:"preview,omitempty"`
+	CWD           string `json:"cwd,omitempty"`
+	ModelProvider string `json:"model_provider,omitempty"`
+	UpdatedAt     int64  `json:"updated_at,omitempty"`
+}
+
 type TaskManager struct {
 	mu             sync.Mutex
 	nextTask       int64
@@ -64,12 +82,14 @@ type TaskManager struct {
 	taskByThread   map[string]string
 	approvals      map[string]*Approval
 	approvalByTask map[string][]string
+	chatSettings   map[string]*ChatSettings
 }
 
 type Snapshot struct {
-	NextTask  int64      `json:"next_task"`
-	Tasks     []Task     `json:"tasks"`
-	Approvals []Approval `json:"approvals"`
+	NextTask     int64          `json:"next_task"`
+	Tasks        []Task         `json:"tasks"`
+	Approvals    []Approval     `json:"approvals"`
+	ChatSettings []ChatSettings `json:"chat_settings,omitempty"`
 }
 
 func NewTaskManager() *TaskManager {
@@ -79,6 +99,7 @@ func NewTaskManager() *TaskManager {
 		taskByThread:   make(map[string]string),
 		approvals:      make(map[string]*Approval),
 		approvalByTask: make(map[string][]string),
+		chatSettings:   make(map[string]*ChatSettings),
 	}
 }
 
@@ -98,6 +119,10 @@ func NewTaskManagerFromSnapshot(snapshot Snapshot) *TaskManager {
 		manager.approvals[approval.ID] = cloneApproval(&approval)
 		manager.approvalByTask[approval.TaskID] = append(manager.approvalByTask[approval.TaskID], approval.ID)
 	}
+	for i := range snapshot.ChatSettings {
+		settings := snapshot.ChatSettings[i]
+		manager.chatSettings[settings.ChatID] = cloneChatSettings(&settings)
+	}
 	return manager
 }
 
@@ -106,9 +131,10 @@ func (m *TaskManager) Snapshot() Snapshot {
 	defer m.mu.Unlock()
 
 	snapshot := Snapshot{
-		NextTask:  m.nextTask,
-		Tasks:     make([]Task, 0, len(m.tasks)),
-		Approvals: make([]Approval, 0, len(m.approvals)),
+		NextTask:     m.nextTask,
+		Tasks:        make([]Task, 0, len(m.tasks)),
+		Approvals:    make([]Approval, 0, len(m.approvals)),
+		ChatSettings: make([]ChatSettings, 0, len(m.chatSettings)),
 	}
 	for _, task := range m.tasks {
 		snapshot.Tasks = append(snapshot.Tasks, *cloneTask(task))
@@ -116,10 +142,13 @@ func (m *TaskManager) Snapshot() Snapshot {
 	for _, approval := range m.approvals {
 		snapshot.Approvals = append(snapshot.Approvals, *cloneApproval(approval))
 	}
+	for _, settings := range m.chatSettings {
+		snapshot.ChatSettings = append(snapshot.ChatSettings, *cloneChatSettings(settings))
+	}
 	return snapshot
 }
 
-func (m *TaskManager) Start(chatID, userID, repo, prompt string) (*Task, error) {
+func (m *TaskManager) Start(chatID, userID, repo, prompt, model, effort string) (*Task, error) {
 	if chatID == "" {
 		return nil, fmt.Errorf("chatID is required")
 	}
@@ -144,6 +173,8 @@ func (m *TaskManager) Start(chatID, userID, repo, prompt string) (*Task, error) 
 		UserID:    userID,
 		Repo:      repo,
 		Prompt:    prompt,
+		Model:     model,
+		Effort:    effort,
 		Status:    TaskCreated,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -151,6 +182,96 @@ func (m *TaskManager) Start(chatID, userID, repo, prompt string) (*Task, error) 
 	m.tasks[task.ID] = task
 	m.latestByChat[chatID] = task.ID
 
+	return cloneTask(task), nil
+}
+
+func (m *TaskManager) Resume(chatID, userID, repo, prompt, threadID, model, effort string) (*Task, error) {
+	if chatID == "" {
+		return nil, fmt.Errorf("chatID is required")
+	}
+	if userID == "" {
+		return nil, fmt.Errorf("userID is required")
+	}
+	if repo == "" {
+		return nil, fmt.Errorf("repo is required")
+	}
+	if threadID == "" {
+		return nil, fmt.Errorf("threadID is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.nextTask++
+	now := time.Now().UTC()
+	task := &Task{
+		ID:        fmt.Sprintf("task-%06d", m.nextTask),
+		ChatID:    chatID,
+		UserID:    userID,
+		Repo:      repo,
+		Prompt:    prompt,
+		Model:     model,
+		Effort:    effort,
+		ThreadID:  threadID,
+		Status:    TaskResumed,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	m.tasks[task.ID] = task
+	m.latestByChat[chatID] = task.ID
+	m.taskByThread[threadID] = task.ID
+
+	return cloneTask(task), nil
+}
+
+func (m *TaskManager) ChatSettings(chatID string) (ChatSettings, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	settings, ok := m.chatSettings[chatID]
+	if !ok {
+		return ChatSettings{}, false
+	}
+	return *cloneChatSettings(settings), true
+}
+
+func (m *TaskManager) SetChatSettings(chatID, model, effort string) (ChatSettings, error) {
+	if chatID == "" {
+		return ChatSettings{}, fmt.Errorf("chatID is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	settings, ok := m.chatSettings[chatID]
+	if !ok {
+		settings = &ChatSettings{ChatID: chatID}
+		m.chatSettings[chatID] = settings
+	}
+	if model != "" {
+		settings.Model = model
+	}
+	if effort != "" {
+		settings.Effort = effort
+	}
+	return *cloneChatSettings(settings), nil
+}
+
+func (m *TaskManager) SetLatestOptions(chatID, model, effort string) (*Task, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	task, err := m.latestByChatLocked(chatID)
+	if err != nil {
+		return nil, err
+	}
+	if model != "" {
+		task.Model = model
+	}
+	if effort != "" {
+		task.Effort = effort
+	}
+	task.UpdatedAt = time.Now().UTC()
 	return cloneTask(task), nil
 }
 
@@ -413,5 +534,10 @@ func cloneApproval(approval *Approval) *Approval {
 		resolvedAt := *approval.ResolvedAt
 		cp.ResolvedAt = &resolvedAt
 	}
+	return &cp
+}
+
+func cloneChatSettings(settings *ChatSettings) *ChatSettings {
+	cp := *settings
 	return &cp
 }
