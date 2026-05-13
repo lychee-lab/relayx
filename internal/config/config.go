@@ -11,7 +11,7 @@ import (
 
 const (
 	appDirName        = ".relayx"
-	configFileName    = "config.tomL"
+	configFileName    = "config.toml"
 	defaultListenAddr = "127.0.0.1:8787"
 	defaultCodexBin   = "codex"
 	defaultCodexMode  = "disabled"

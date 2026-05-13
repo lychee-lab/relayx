@@ -16,7 +16,7 @@ func TestLoadDefaultsToRelayXHome(t *testing.T) {
 	}
 
 	base := filepath.Join(home, ".relayx")
-	if cfg.ConfigPath != filepath.Join(base, "config.tomL") {
+	if cfg.ConfigPath != filepath.Join(base, "config.toml") {
 		t.Fatalf("ConfigPath = %q", cfg.ConfigPath)
 	}
 	if cfg.RuntimeDir != filepath.Join(base, "run") {
@@ -35,7 +35,7 @@ func TestLoadDefaultsToRelayXHome(t *testing.T) {
 
 func TestLoadReadsTOMLConfig(t *testing.T) {
 	home := testHome(t)
-	configPath := filepath.Join(home, "custom.tomL")
+	configPath := filepath.Join(home, "custom.toml")
 	writeConfig(t, configPath, `
 listen_addr = "0.0.0.0:9000"
 codex_bin = "/opt/codex"
@@ -93,7 +93,7 @@ verification_token = "verify_file"
 
 func TestLoadEnvironmentOverridesTOML(t *testing.T) {
 	home := testHome(t)
-	configPath := filepath.Join(home, "config.tomL")
+	configPath := filepath.Join(home, "config.toml")
 	writeConfig(t, configPath, `
 listen_addr = "0.0.0.0:9000"
 codex_bin = "file-codex"
@@ -174,7 +174,7 @@ func TestLoadIgnoresLegacyCodexBabysitterEnv(t *testing.T) {
 
 func TestLoadReportsInvalidTOML(t *testing.T) {
 	home := testHome(t)
-	configPath := filepath.Join(home, "bad.tomL")
+	configPath := filepath.Join(home, "bad.toml")
 	writeConfig(t, configPath, `listen_addr = "unterminated`)
 	t.Setenv("RELAYX_CONFIG", configPath)
 

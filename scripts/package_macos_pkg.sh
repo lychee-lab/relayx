@@ -22,7 +22,7 @@ The package installs:
   /usr/local/bin/relayx
   /usr/local/share/relayx/README.md
   /usr/local/share/relayx/LICENSE
-  /usr/local/share/relayx/config.tomL.example
+  /usr/local/share/relayx/config.toml.example
   /usr/local/share/relayx/install-from-source.sh
   /usr/local/share/relayx/uninstall.sh
 EOF
@@ -161,11 +161,11 @@ printf 'Uninstalled %s from /usr/local/bin\\n' "$APP_NAME"
 EOF
 chmod 0755 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/uninstall.sh"
 
-cat >"$PAYLOAD_DIR/usr/local/share/$APP_NAME/config.tomL.example" <<'EOF'
+cat >"$PAYLOAD_DIR/usr/local/share/$APP_NAME/config.toml.example" <<'EOF'
 # relayx runtime configuration.
 # Copy this file to a user-owned location before editing, for example:
 #   mkdir -p ~/.relayx
-#   cp /usr/local/share/relayx/config.tomL.example ~/.relayx/config.tomL
+#   cp /usr/local/share/relayx/config.toml.example ~/.relayx/config.toml
 
 listen_addr = "127.0.0.1:8787"
 codex_mode = "disabled"
@@ -183,7 +183,7 @@ app_secret = ""
 base_url = "https://open.feishu.cn/open-apis"
 verification_token = ""
 EOF
-chmod 0644 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/config.tomL.example"
+chmod 0644 "$PAYLOAD_DIR/usr/local/share/$APP_NAME/config.toml.example"
 
 cat >"$SCRIPTS_DIR/postinstall" <<'EOF'
 #!/bin/bash
@@ -195,10 +195,10 @@ cat <<'MSG'
 relayx has been installed to /usr/local/bin/relayx.
 
 Runtime config template:
-  /usr/local/share/relayx/config.tomL.example
+  /usr/local/share/relayx/config.toml.example
 
 Default user config path:
-  ~/.relayx/config.tomL
+  ~/.relayx/config.toml
 
 Uninstall:
   sudo /usr/local/share/relayx/uninstall.sh

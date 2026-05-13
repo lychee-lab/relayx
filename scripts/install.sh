@@ -18,7 +18,7 @@ Environment overrides:
   PREFIX              Install prefix. Defaults to $HOME/.local.
   BINDIR              Binary install directory. Defaults to $PREFIX/bin.
   RELAYX_HOME         RelayX config and runtime directory. Defaults to $HOME/.relayx.
-  CONFIG_FILE         Config file path. Defaults to $RELAYX_HOME/config.tomL.
+  CONFIG_FILE         Config file path. Defaults to $RELAYX_HOME/config.toml.
   CODEX_INSTALL_CMD   Command used when codex is missing.
 
 Default behavior:
@@ -26,7 +26,7 @@ Default behavior:
   - On macOS with Homebrew, the default Codex install command is:
       brew install --cask codex
   - Build this Go app and install the binary to $BINDIR/relayx.
-  - Write a TOML config template to $RELAYX_HOME/config.tomL.
+  - Write a TOML config template to $RELAYX_HOME/config.toml.
   - Create $RELAYX_HOME/run and $RELAYX_HOME/logs.
 EOF
 }
@@ -76,7 +76,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PREFIX="${PREFIX:-"$HOME/.local"}"
 BINDIR="${BINDIR:-"$PREFIX/bin"}"
 RELAYX_HOME="${RELAYX_HOME:-"$HOME/.relayx"}"
-CONFIG_FILE="${CONFIG_FILE:-"$RELAYX_HOME/config.tomL"}"
+CONFIG_FILE="${CONFIG_FILE:-"$RELAYX_HOME/config.toml"}"
 RUN_DIR="$RELAYX_HOME/run"
 LOG_DIR="$RELAYX_HOME/logs"
 STATE_FILE="$RELAYX_HOME/state.json"
@@ -168,9 +168,9 @@ write_default_config() {
 listen_addr = "$DEFAULT_LISTEN_ADDR"
 codex_mode = "disabled"
 codex_bin = "codex"
-runtime_dir = "$RUN_DIR"
-db = "$STATE_FILE"
-audit_log = "$AUDIT_FILE"
+runtime_dir = "~/.relayx/run"
+db = "~/.relayx/state.json"
+audit_log = "~/.relayx/logs/audit.jsonl"
 
 authorized_users = []
 allowed_repos = []

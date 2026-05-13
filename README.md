@@ -109,7 +109,7 @@ Default locations:
 
 ```text
 Binary:  $HOME/.local/bin/relayx
-Config:  $HOME/.relayx/config.tomL
+Config:  $HOME/.relayx/config.toml
 Runtime: $HOME/.relayx/run
 State:   $HOME/.relayx/state.json
 Logs:    $HOME/.relayx/logs
@@ -139,7 +139,7 @@ sudo installer -pkg dist/relayx-dev-darwin-arm64.pkg -target /
 ```
 
 The `.pkg` installs `relayx` to `/usr/local/bin/relayx` and places a config
-template at `/usr/local/share/relayx/config.tomL.example`. Remove the package
+template at `/usr/local/share/relayx/config.toml.example`. Remove the package
 with `sudo /usr/local/share/relayx/uninstall.sh`. GitHub Actions builds macOS
 `.pkg` artifacts for both `amd64` and `arm64`; pushing a `v*` tag also attaches
 them to the GitHub Release. Unsigned packages are useful for internal testing.
@@ -172,7 +172,7 @@ RELAYX_CODEX_MODE=app-server go run ./cmd/relayx serve
 
 ## Configuration
 
-RelayX is configured through `~/.relayx/config.tomL`. Environment variables can
+RelayX is configured through `~/.relayx/config.toml`. Environment variables can
 still override config file values for temporary runs, CI, or secret injection.
 
 Default config:
@@ -205,7 +205,7 @@ app-server  Start `codex app-server --listen stdio://` and drive it via JSON-RPC
 Useful environment overrides:
 
 ```bash
-RELAYX_CONFIG=/path/to/config.tomL
+RELAYX_CONFIG=/path/to/config.toml
 RELAYX_LISTEN_ADDR=127.0.0.1:8787
 RELAYX_CODEX_MODE=app-server
 RELAYX_CODEX_BIN=codex
@@ -552,7 +552,7 @@ scripts/install.sh
 
 ```text
 Binary:  $HOME/.local/bin/relayx
-Config:  $HOME/.relayx/config.tomL
+Config:  $HOME/.relayx/config.toml
 Runtime: $HOME/.relayx/run
 State:   $HOME/.relayx/state.json
 Logs:    $HOME/.relayx/logs
@@ -582,7 +582,7 @@ sudo installer -pkg dist/relayx-dev-darwin-arm64.pkg -target /
 ```
 
 `.pkg` 会把 `relayx` 安装到 `/usr/local/bin/relayx`，并把配置模板放到
-`/usr/local/share/relayx/config.tomL.example`。卸载时执行
+`/usr/local/share/relayx/config.toml.example`。卸载时执行
 `sudo /usr/local/share/relayx/uninstall.sh`。GitHub Actions 会同时构建
 `amd64` 和 `arm64` 的 macOS `.pkg` 产物；推送 `v*` tag 时也会自动附加到
 GitHub Release。未签名安装包适合内部测试；如果要面向外部分发并支持更顺滑的双击安装，应使用 Developer ID Installer 证书并做 Apple notarization。
@@ -613,7 +613,7 @@ RELAYX_CODEX_MODE=app-server go run ./cmd/relayx serve
 
 ## 配置
 
-RelayX 通过 `~/.relayx/config.tomL` 进行配置。环境变量仍可用于临时运行、CI 或敏感信息注入，并且优先级高于配置文件。
+RelayX 通过 `~/.relayx/config.toml` 进行配置。环境变量仍可用于临时运行、CI 或敏感信息注入，并且优先级高于配置文件。
 
 默认配置：
 
@@ -649,7 +649,7 @@ app-server  Start `codex app-server --listen stdio://` and drive it via JSON-RPC
 常用环境变量覆盖：
 
 ```bash
-RELAYX_CONFIG=/path/to/config.tomL
+RELAYX_CONFIG=/path/to/config.toml
 RELAYX_LISTEN_ADDR=127.0.0.1:8787
 RELAYX_CODEX_MODE=app-server
 RELAYX_CODEX_BIN=codex
