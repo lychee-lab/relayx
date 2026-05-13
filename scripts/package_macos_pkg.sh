@@ -189,17 +189,50 @@ cat >"$SCRIPTS_DIR/postinstall" <<'EOF'
 #!/bin/bash
 set -e
 
+APP_NAME="relayx"
+TEMPLATE="/usr/local/share/$APP_NAME/config.toml.example"
+
 chmod 0755 /usr/local/bin/relayx
+
+console_user="$(stat -f %Su /dev/console 2>/dev/null || true)"
+user_home=""
+user_config=""
+
+if [ -n "$console_user" ] && [ "$console_user" != "root" ] && [ "$console_user" != "loginwindow" ]; then
+  user_home="$(dscl . -read "/Users/$console_user" NFSHomeDirectory 2>/dev/null | awk '{print $2}')"
+  if [ -n "$user_home" ] && [ -d "$user_home" ]; then
+    relayx_home="$user_home/.relayx"
+    user_config="$relayx_home/config.toml"
+
+    mkdir -p "$relayx_home/run" "$relayx_home/logs"
+    if [ ! -f "$user_config" ]; then
+      cp "$TEMPLATE" "$user_config"
+      chmod 0600 "$user_config"
+    fi
+    chown -R "$console_user" "$relayx_home" 2>/dev/null || true
+  fi
+fi
 
 cat <<'MSG'
 relayx has been installed to /usr/local/bin/relayx.
 
 Runtime config template:
   /usr/local/share/relayx/config.toml.example
+MSG
 
-Default user config path:
-  ~/.relayx/config.toml
+if [ -n "$user_config" ]; then
+  printf 'User config:\n  %s\n\n' "$user_config"
+else
+  cat <<'MSG'
+User config was not created automatically because no active console user was detected.
+Create it manually with:
+  mkdir -p ~/.relayx
+  cp /usr/local/share/relayx/config.toml.example ~/.relayx/config.toml
 
+MSG
+fi
+
+cat <<'MSG'
 Uninstall:
   sudo /usr/local/share/relayx/uninstall.sh
 
