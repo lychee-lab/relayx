@@ -81,6 +81,76 @@ func TestCallbackMessageCreatesTask(t *testing.T) {
 	}
 }
 
+func TestCallbackMessageDeduplicatesByEventID(t *testing.T) {
+	notifier := &callbackNotifier{}
+	tasks := core.NewTaskManager()
+	service := app.NewService(tasks)
+	handler := CallbackHandler{
+		Service:           service,
+		Notifier:          notifier,
+		VerificationToken: "verify-token",
+	}
+	payload := map[string]any{
+		"header": map[string]any{"event_type": "im.message.receive_v1", "event_id": "evt_1", "token": "verify-token"},
+		"event": map[string]any{
+			"sender": map[string]any{"sender_id": map[string]any{"open_id": "ou_1"}},
+			"message": map[string]any{
+				"message_id": "om_1",
+				"chat_id":    "oc_1",
+				"content":    `{"text":"/codex start repo=/tmp/demo fix bug"}`,
+			},
+		},
+	}
+
+	handler.ServeHTTP(httptest.NewRecorder(), callbackRequest(payload))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, callbackRequest(payload))
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "duplicate") {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(notifier.messages) != 1 {
+		t.Fatalf("messages = %#v", notifier.messages)
+	}
+	if len(tasks.Snapshot().Tasks) != 1 {
+		t.Fatalf("tasks = %#v", tasks.Snapshot().Tasks)
+	}
+}
+
+func TestCallbackMessageDeduplicatesByMessageID(t *testing.T) {
+	notifier := &callbackNotifier{}
+	tasks := core.NewTaskManager()
+	service := app.NewService(tasks)
+	handler := CallbackHandler{
+		Service:           service,
+		Notifier:          notifier,
+		VerificationToken: "verify-token",
+	}
+	payload := map[string]any{
+		"header": map[string]any{"event_type": "im.message.receive_v1", "event_id": "evt_1", "token": "verify-token"},
+		"event": map[string]any{
+			"sender": map[string]any{"sender_id": map[string]any{"open_id": "ou_1"}},
+			"message": map[string]any{
+				"message_id": "om_1",
+				"chat_id":    "oc_1",
+				"content":    `{"text":"/codex start repo=/tmp/demo fix bug"}`,
+			},
+		},
+	}
+	handler.ServeHTTP(httptest.NewRecorder(), callbackRequest(payload))
+
+	payload["header"] = map[string]any{"event_type": "im.message.receive_v1", "event_id": "evt_2", "token": "verify-token"}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, callbackRequest(payload))
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "duplicate") {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(notifier.messages) != 1 || len(tasks.Snapshot().Tasks) != 1 {
+		t.Fatalf("messages = %#v tasks = %#v", notifier.messages, tasks.Snapshot().Tasks)
+	}
+}
+
 func TestCallbackMessageErrorIsVisible(t *testing.T) {
 	notifier := &callbackNotifier{}
 	service := app.NewService(core.NewTaskManager())
@@ -152,6 +222,49 @@ func TestCallbackCardActionResolvesApproval(t *testing.T) {
 	approval, ok := tasks.ApprovalByID("approval-1")
 	if !ok || approval.Status != core.ApprovalApproved {
 		t.Fatalf("approval = %#v ok=%v", approval, ok)
+	}
+}
+
+func TestCallbackCardActionDeduplicatesByEventID(t *testing.T) {
+	tasks := core.NewTaskManager()
+	task, err := tasks.Start("oc_1", "ou_1", "/tmp/demo", "fix bug", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.MarkStarted(task.ID, "thread-1", "turn-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.AddApproval(task.ID, "approval-1", "thread-1", "turn-1", "item/commandExecution/requestApproval", "npm test", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+
+	notifier := &callbackNotifier{}
+	service := app.NewService(tasks)
+	handler := CallbackHandler{
+		Service:           service,
+		Notifier:          notifier,
+		VerificationToken: "verify-token",
+	}
+	payload := map[string]any{
+		"header": map[string]any{"event_type": "card.action.trigger", "event_id": "evt_card_1", "token": "verify-token"},
+		"event": map[string]any{
+			"operator": map[string]any{"operator_id": map[string]any{"open_id": "ou_1"}},
+			"action": map[string]any{"value": map[string]any{
+				"approval_id": "approval-1",
+				"decision":    string(codex.ApprovalApproved),
+			}},
+		},
+	}
+
+	handler.ServeHTTP(httptest.NewRecorder(), callbackRequest(payload))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, callbackRequest(payload))
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "duplicate") {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if len(notifier.messages) != 1 {
+		t.Fatalf("messages = %#v", notifier.messages)
 	}
 }
 

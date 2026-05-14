@@ -49,6 +49,16 @@ func (r WSReceiver) Start(ctx context.Context) error {
 }
 
 func (r WSReceiver) handleP2MessageReceiveV1(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+	handled, err := r.recordEvent(ctx, p2MessageReceiveEventIDs(event)...)
+	if err != nil {
+		log.Printf("feishu long connection event dedupe failed: %v", err)
+		return nil
+	}
+	if !handled {
+		log.Printf("feishu long connection duplicate message ignored ids=%v", p2MessageReceiveEventIDs(event))
+		return nil
+	}
+
 	msg, err := InboundMessageFromP2MessageReceiveV1(event)
 	if err != nil {
 		log.Printf("feishu long connection message ignored: %v", err)
@@ -60,6 +70,16 @@ func (r WSReceiver) handleP2MessageReceiveV1(ctx context.Context, event *larkim.
 }
 
 func (r WSReceiver) handleP2CardActionTrigger(ctx context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
+	handled, err := r.recordEvent(ctx, p2CardActionEventIDs(event)...)
+	if err != nil {
+		log.Printf("feishu long connection card action dedupe failed: %v", err)
+		return cardToast(fmt.Sprintf("RelayX error: %s", err)), nil
+	}
+	if !handled {
+		log.Printf("feishu long connection duplicate card action ignored ids=%v", p2CardActionEventIDs(event))
+		return cardToast("duplicate event ignored"), nil
+	}
+
 	if event == nil || event.Event == nil || event.Event.Action == nil {
 		return cardToast("RelayX error: missing card action"), nil
 	}
@@ -91,6 +111,13 @@ func (r WSReceiver) handleP2CardActionTrigger(ctx context.Context, event *callba
 	return cardToast(reply.Text), nil
 }
 
+func (r WSReceiver) recordEvent(ctx context.Context, eventIDs ...string) (bool, error) {
+	if r.Service == nil {
+		return true, nil
+	}
+	return r.Service.RecordExternalEvents(ctx, "feishu", eventIDs...)
+}
+
 func InboundMessageFromP2MessageReceiveV1(event *larkim.P2MessageReceiveV1) (app.InboundMessage, error) {
 	if event == nil || event.Event == nil {
 		return app.InboundMessage{}, fmt.Errorf("missing event")
@@ -112,6 +139,31 @@ func InboundMessageFromP2MessageReceiveV1(event *larkim.P2MessageReceiveV1) (app
 		),
 		Text: text,
 	}, nil
+}
+
+func p2MessageReceiveEventIDs(event *larkim.P2MessageReceiveV1) []string {
+	if event == nil {
+		return nil
+	}
+	eventID := ""
+	if event.EventV2Base != nil && event.EventV2Base.Header != nil {
+		eventID = event.EventV2Base.Header.EventID
+	}
+	messageID := ""
+	if event.Event != nil && event.Event.Message != nil {
+		messageID = ptrString(event.Event.Message.MessageId)
+	}
+	return prefixedEventIDs(
+		prefixedEventID("event", eventID),
+		prefixedEventID("message", messageID),
+	)
+}
+
+func p2CardActionEventIDs(event *callback.CardActionTriggerEvent) []string {
+	if event == nil || event.EventV2Base == nil || event.EventV2Base.Header == nil {
+		return nil
+	}
+	return prefixedEventIDs(prefixedEventID("event", event.EventV2Base.Header.EventID))
 }
 
 func cardToast(text string) *callback.CardActionTriggerResponse {

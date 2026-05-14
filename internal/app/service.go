@@ -118,6 +118,21 @@ func (s *Service) TaskByID(taskID string) (core.Task, bool) {
 	return s.tasks.ByID(taskID)
 }
 
+func (s *Service) RecordExternalEvents(ctx context.Context, source string, eventIDs ...string) (bool, error) {
+	keys := externalEventKeys(source, eventIDs...)
+	if len(keys) == 0 {
+		return true, nil
+	}
+	if !s.tasks.MarkProcessedEvents(keys, time.Now().UTC()) {
+		_ = s.audit(ctx, "", "external_event.duplicate", source, map[string]any{"ids": keys})
+		return false, nil
+	}
+	if err := s.persist(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Service) Run(ctx context.Context) {
 	if s.codex == nil {
 		<-ctx.Done()
@@ -656,6 +671,28 @@ func isTerminalTaskStatus(status core.TaskStatus) bool {
 	default:
 		return false
 	}
+}
+
+func externalEventKeys(source string, eventIDs ...string) []string {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "external"
+	}
+	keys := make([]string, 0, len(eventIDs))
+	seen := make(map[string]struct{}, len(eventIDs))
+	for _, id := range eventIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		key := source + ":" + id
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func (s *Service) handleCodexApproval(ctx context.Context, req codex.ApprovalRequest) {

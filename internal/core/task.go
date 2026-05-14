@@ -2,9 +2,13 @@ package core
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+const maxProcessedEvents = 2048
 
 type TaskStatus string
 
@@ -74,32 +78,40 @@ type ResumeOption struct {
 	UpdatedAt     int64  `json:"updated_at,omitempty"`
 }
 
+type ProcessedEvent struct {
+	ID          string    `json:"id"`
+	ProcessedAt time.Time `json:"processed_at"`
+}
+
 type TaskManager struct {
-	mu             sync.Mutex
-	nextTask       int64
-	tasks          map[string]*Task
-	latestByChat   map[string]string
-	taskByThread   map[string]string
-	approvals      map[string]*Approval
-	approvalByTask map[string][]string
-	chatSettings   map[string]*ChatSettings
+	mu              sync.Mutex
+	nextTask        int64
+	tasks           map[string]*Task
+	latestByChat    map[string]string
+	taskByThread    map[string]string
+	approvals       map[string]*Approval
+	approvalByTask  map[string][]string
+	chatSettings    map[string]*ChatSettings
+	processedEvents map[string]time.Time
 }
 
 type Snapshot struct {
-	NextTask     int64          `json:"next_task"`
-	Tasks        []Task         `json:"tasks"`
-	Approvals    []Approval     `json:"approvals"`
-	ChatSettings []ChatSettings `json:"chat_settings,omitempty"`
+	NextTask        int64            `json:"next_task"`
+	Tasks           []Task           `json:"tasks"`
+	Approvals       []Approval       `json:"approvals"`
+	ChatSettings    []ChatSettings   `json:"chat_settings,omitempty"`
+	ProcessedEvents []ProcessedEvent `json:"processed_events,omitempty"`
 }
 
 func NewTaskManager() *TaskManager {
 	return &TaskManager{
-		tasks:          make(map[string]*Task),
-		latestByChat:   make(map[string]string),
-		taskByThread:   make(map[string]string),
-		approvals:      make(map[string]*Approval),
-		approvalByTask: make(map[string][]string),
-		chatSettings:   make(map[string]*ChatSettings),
+		tasks:           make(map[string]*Task),
+		latestByChat:    make(map[string]string),
+		taskByThread:    make(map[string]string),
+		approvals:       make(map[string]*Approval),
+		approvalByTask:  make(map[string][]string),
+		chatSettings:    make(map[string]*ChatSettings),
+		processedEvents: make(map[string]time.Time),
 	}
 }
 
@@ -123,6 +135,12 @@ func NewTaskManagerFromSnapshot(snapshot Snapshot) *TaskManager {
 		settings := snapshot.ChatSettings[i]
 		manager.chatSettings[settings.ChatID] = cloneChatSettings(&settings)
 	}
+	for _, event := range snapshot.ProcessedEvents {
+		if strings.TrimSpace(event.ID) != "" {
+			manager.processedEvents[event.ID] = event.ProcessedAt
+		}
+	}
+	manager.compactProcessedEventsLocked()
 	return manager
 }
 
@@ -131,10 +149,11 @@ func (m *TaskManager) Snapshot() Snapshot {
 	defer m.mu.Unlock()
 
 	snapshot := Snapshot{
-		NextTask:     m.nextTask,
-		Tasks:        make([]Task, 0, len(m.tasks)),
-		Approvals:    make([]Approval, 0, len(m.approvals)),
-		ChatSettings: make([]ChatSettings, 0, len(m.chatSettings)),
+		NextTask:        m.nextTask,
+		Tasks:           make([]Task, 0, len(m.tasks)),
+		Approvals:       make([]Approval, 0, len(m.approvals)),
+		ChatSettings:    make([]ChatSettings, 0, len(m.chatSettings)),
+		ProcessedEvents: make([]ProcessedEvent, 0, len(m.processedEvents)),
 	}
 	for _, task := range m.tasks {
 		snapshot.Tasks = append(snapshot.Tasks, *cloneTask(task))
@@ -145,6 +164,12 @@ func (m *TaskManager) Snapshot() Snapshot {
 	for _, settings := range m.chatSettings {
 		snapshot.ChatSettings = append(snapshot.ChatSettings, *cloneChatSettings(settings))
 	}
+	for id, processedAt := range m.processedEvents {
+		snapshot.ProcessedEvents = append(snapshot.ProcessedEvents, ProcessedEvent{ID: id, ProcessedAt: processedAt})
+	}
+	sort.Slice(snapshot.ProcessedEvents, func(i, j int) bool {
+		return snapshot.ProcessedEvents[i].ProcessedAt.Before(snapshot.ProcessedEvents[j].ProcessedAt)
+	})
 	return snapshot
 }
 
@@ -334,6 +359,29 @@ func (m *TaskManager) ByThread(threadID string) (Task, bool) {
 	return *cloneTask(task), true
 }
 
+func (m *TaskManager) MarkProcessedEvents(eventIDs []string, processedAt time.Time) bool {
+	ids := normalizeProcessedEventIDs(eventIDs)
+	if len(ids) == 0 {
+		return true
+	}
+	if processedAt.IsZero() {
+		processedAt = time.Now().UTC()
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range ids {
+		if _, ok := m.processedEvents[id]; ok {
+			return false
+		}
+	}
+	for _, id := range ids {
+		m.processedEvents[id] = processedAt
+	}
+	m.compactProcessedEventsLocked()
+	return true
+}
+
 func (m *TaskManager) SetStatus(taskID string, status TaskStatus, event string, errText string) (*Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -410,6 +458,42 @@ func (m *TaskManager) SetStatusByThread(threadID string, status TaskStatus, even
 	task.Error = errText
 	task.UpdatedAt = time.Now().UTC()
 	return cloneTask(task), true
+}
+
+func normalizeProcessedEventIDs(eventIDs []string) []string {
+	out := make([]string, 0, len(eventIDs))
+	seen := make(map[string]struct{}, len(eventIDs))
+	for _, id := range eventIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func (m *TaskManager) compactProcessedEventsLocked() {
+	if len(m.processedEvents) <= maxProcessedEvents {
+		return
+	}
+	events := make([]ProcessedEvent, 0, len(m.processedEvents))
+	for id, processedAt := range m.processedEvents {
+		events = append(events, ProcessedEvent{ID: id, ProcessedAt: processedAt})
+	}
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].ProcessedAt.Equal(events[j].ProcessedAt) {
+			return events[i].ID < events[j].ID
+		}
+		return events[i].ProcessedAt.Before(events[j].ProcessedAt)
+	})
+	for i := 0; i < len(events)-maxProcessedEvents; i++ {
+		delete(m.processedEvents, events[i].ID)
+	}
 }
 
 func (m *TaskManager) AddApproval(taskID, approvalID, threadID, turnID, kind, summary string, ttl time.Duration) (*Approval, error) {

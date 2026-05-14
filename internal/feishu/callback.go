@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/lychee-lab/relayx/internal/app"
 	"github.com/lychee-lab/relayx/internal/codex"
@@ -59,6 +60,16 @@ func (h CallbackHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h CallbackHandler) handleMessage(w http.ResponseWriter, ctx context.Context, envelope map[string]any) {
+	handled, err := h.recordEvent(ctx, messageEventIDsFromEnvelope(envelope)...)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"code": 1, "msg": err.Error()})
+		return
+	}
+	if !handled {
+		writeJSON(w, http.StatusOK, map[string]any{"code": 0, "msg": "duplicate"})
+		return
+	}
+
 	msg := app.InboundMessage{
 		ChatID: nestedString(envelope, "event", "message", "chat_id"),
 		UserID: firstNonEmpty(
@@ -76,6 +87,16 @@ func (h CallbackHandler) handleMessage(w http.ResponseWriter, ctx context.Contex
 }
 
 func (h CallbackHandler) handleCardAction(w http.ResponseWriter, ctx context.Context, envelope map[string]any) {
+	handled, err := h.recordEvent(ctx, cardActionEventIDsFromEnvelope(envelope)...)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"code": 1, "msg": err.Error()})
+		return
+	}
+	if !handled {
+		writeJSON(w, http.StatusOK, map[string]any{"code": 0, "msg": "duplicate", "toast": "duplicate event ignored"})
+		return
+	}
+
 	action := nestedString(envelope, "event", "action", "value", "action")
 	if action == "resume_thread" {
 		h.handleResumeAction(w, ctx, envelope)
@@ -130,6 +151,13 @@ func (h CallbackHandler) handleResumeAction(w http.ResponseWriter, ctx context.C
 	writeJSON(w, http.StatusOK, map[string]any{"code": 0, "msg": "ok", "toast": reply.Text})
 }
 
+func (h CallbackHandler) recordEvent(ctx context.Context, eventIDs ...string) (bool, error) {
+	if h.Service == nil {
+		return true, nil
+	}
+	return h.Service.RecordExternalEvents(ctx, "feishu", eventIDs...)
+}
+
 func (h CallbackHandler) verifyToken(envelope map[string]any) bool {
 	if h.VerificationToken == "" {
 		return true
@@ -139,6 +167,41 @@ func (h CallbackHandler) verifyToken(envelope map[string]any) bool {
 		nestedString(envelope, "header", "token"),
 	)
 	return token == h.VerificationToken
+}
+
+func messageEventIDsFromEnvelope(envelope map[string]any) []string {
+	return prefixedEventIDs(
+		prefixedEventID("event", nestedString(envelope, "header", "event_id")),
+		prefixedEventID("message", nestedString(envelope, "event", "message", "message_id")),
+	)
+}
+
+func cardActionEventIDsFromEnvelope(envelope map[string]any) []string {
+	return prefixedEventIDs(prefixedEventID("event", nestedString(envelope, "header", "event_id")))
+}
+
+func prefixedEventID(prefix, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return prefix + ":" + value
+}
+
+func prefixedEventIDs(values ...string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func extractMessageText(content string) string {

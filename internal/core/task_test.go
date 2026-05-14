@@ -1,6 +1,10 @@
 package core
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+	"time"
+)
 
 func TestTaskManagerStartAndStatus(t *testing.T) {
 	tasks := NewTaskManager()
@@ -64,5 +68,45 @@ func TestTaskManagerResume(t *testing.T) {
 	latest, ok := tasks.LatestByChat("oc_1")
 	if !ok || latest.ID != task.ID {
 		t.Fatalf("latest = %#v ok=%v", latest, ok)
+	}
+}
+
+func TestTaskManagerProcessedEventsPersistAndDedupe(t *testing.T) {
+	tasks := NewTaskManager()
+	at := time.Date(2026, 5, 14, 8, 0, 0, 0, time.UTC)
+
+	if !tasks.MarkProcessedEvents([]string{"feishu:event:evt_1", "feishu:message:om_1"}, at) {
+		t.Fatal("expected first event to be accepted")
+	}
+	if tasks.MarkProcessedEvents([]string{"feishu:event:evt_2", "feishu:message:om_1"}, at.Add(time.Second)) {
+		t.Fatal("expected repeated message id to be rejected")
+	}
+
+	restored := NewTaskManagerFromSnapshot(tasks.Snapshot())
+	if restored.MarkProcessedEvents([]string{"feishu:event:evt_3", "feishu:message:om_1"}, at.Add(2*time.Second)) {
+		t.Fatal("expected restored manager to reject repeated message id")
+	}
+}
+
+func TestTaskManagerProcessedEventsAreCapped(t *testing.T) {
+	tasks := NewTaskManager()
+	base := time.Date(2026, 5, 14, 8, 0, 0, 0, time.UTC)
+
+	for i := 0; i < maxProcessedEvents+10; i++ {
+		id := fmt.Sprintf("feishu:event:evt_%04d", i)
+		if !tasks.MarkProcessedEvents([]string{id}, base.Add(time.Duration(i)*time.Second)) {
+			t.Fatalf("event %q was rejected", id)
+		}
+	}
+
+	snapshot := tasks.Snapshot()
+	if len(snapshot.ProcessedEvents) != maxProcessedEvents {
+		t.Fatalf("processed event count = %d, want %d", len(snapshot.ProcessedEvents), maxProcessedEvents)
+	}
+	if tasks.MarkProcessedEvents([]string{"feishu:event:evt_0010"}, base.Add(time.Hour)) {
+		t.Fatal("expected newest capped set to keep recent duplicate history")
+	}
+	if !tasks.MarkProcessedEvents([]string{"feishu:event:evt_0000"}, base.Add(time.Hour)) {
+		t.Fatal("expected oldest event outside cap to be accepted again")
 	}
 }

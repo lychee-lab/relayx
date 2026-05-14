@@ -17,6 +17,15 @@ func (a *testAuditor) Log(_ context.Context, event AuditEvent) error {
 	return nil
 }
 
+type testStateStore struct {
+	snapshots []core.Snapshot
+}
+
+func (s *testStateStore) Save(_ context.Context, snapshot core.Snapshot) error {
+	s.snapshots = append(s.snapshots, snapshot)
+	return nil
+}
+
 func TestServiceHandlesTaskLifecycle(t *testing.T) {
 	service := NewService(core.NewTaskManager())
 	ctx := context.Background()
@@ -107,5 +116,33 @@ func TestServiceRejectsMissingActor(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestServiceRecordExternalEventsPersistsAndDeduplicates(t *testing.T) {
+	state := &testStateStore{}
+	auditor := &testAuditor{}
+	service := NewService(core.NewTaskManager(), WithStateStore(state), WithAuditor(auditor))
+
+	ok, err := service.RecordExternalEvents(context.Background(), "feishu", "event:evt_1", "message:om_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected first event to be accepted")
+	}
+	if len(state.snapshots) != 1 || len(state.snapshots[0].ProcessedEvents) != 2 {
+		t.Fatalf("snapshots = %#v", state.snapshots)
+	}
+
+	ok, err = service.RecordExternalEvents(context.Background(), "feishu", "event:evt_2", "message:om_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected duplicate message id to be rejected")
+	}
+	if len(auditor.events) == 0 || auditor.events[len(auditor.events)-1].Action != "external_event.duplicate" {
+		t.Fatalf("audit events = %#v", auditor.events)
 	}
 }
