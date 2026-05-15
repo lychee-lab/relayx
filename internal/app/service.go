@@ -516,6 +516,9 @@ func (s *Service) handleCodexEvent(ctx context.Context, event codex.Event) {
 	case "turn/completed":
 		status = core.TaskCompleted
 	case "error", "protocol/error":
+		if codexEventMessage(event) == "" {
+			return
+		}
 		status = core.TaskFailed
 		errText = event.Message
 	}
@@ -559,10 +562,7 @@ func isNoisyCodexEvent(kind string) bool {
 }
 
 func codexEventNotification(taskID string, status core.TaskStatus, event codex.Event) string {
-	message := core.RedactSecrets(event.Message)
-	if message == "" || message == event.Kind {
-		message = ""
-	}
+	message := codexEventMessage(event)
 
 	switch status {
 	case core.TaskCompleted:
@@ -575,6 +575,14 @@ func codexEventNotification(taskID string, status core.TaskStatus, event codex.E
 	default:
 		return ""
 	}
+}
+
+func codexEventMessage(event codex.Event) string {
+	message := core.RedactSecrets(event.Message)
+	if message == "" || message == event.Kind {
+		return ""
+	}
+	return message
 }
 
 func (s *Service) appendAgentMessageDelta(task core.Task, event codex.Event) {

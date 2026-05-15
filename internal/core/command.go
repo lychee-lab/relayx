@@ -23,6 +23,8 @@ const (
 	ActionResume Action = "resume"
 )
 
+var ErrUnsupportedCommand = errors.New("command must start with /codex")
+
 type Command struct {
 	Action         Action `json:"action"`
 	Subcommand     string `json:"subcommand,omitempty"`
@@ -55,7 +57,7 @@ func ParseCommand(input string) (Command, error) {
 		return parseResume(fields[1:])
 	case "/codex":
 	default:
-		return Command{}, fmt.Errorf("command must start with /codex")
+		return Command{}, ErrUnsupportedCommand
 	}
 
 	if len(fields) == 1 {
@@ -90,6 +92,10 @@ func ParseCommand(input string) (Command, error) {
 	default:
 		return Command{}, fmt.Errorf("unknown /codex action %q", action)
 	}
+}
+
+func IsUnsupportedCommand(err error) bool {
+	return errors.Is(err, ErrUnsupportedCommand)
 }
 
 func parseResume(args []string) (Command, error) {

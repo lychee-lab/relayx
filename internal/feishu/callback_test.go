@@ -184,6 +184,42 @@ func TestCallbackMessageErrorIsVisible(t *testing.T) {
 	}
 }
 
+func TestCallbackDirectShortcutPreservesRealError(t *testing.T) {
+	notifier := &callbackNotifier{}
+	service := app.NewService(core.NewTaskManager())
+	handler := CallbackHandler{
+		Service:           service,
+		Notifier:          notifier,
+		VerificationToken: "verify-token",
+	}
+	req := callbackRequest(map[string]any{
+		"header": map[string]any{"event_type": "im.message.receive_v1", "token": "verify-token"},
+		"event": map[string]any{
+			"sender": map[string]any{"sender_id": map[string]any{"open_id": "ou_1"}},
+			"message": map[string]any{
+				"chat_id": "oc_1",
+				"content": `{"text":"/model list"}`,
+			},
+		},
+	})
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if len(notifier.messages) != 1 {
+		t.Fatalf("messages = %#v", notifier.messages)
+	}
+	if !strings.Contains(notifier.messages[0], "model list requires RELAYX_CODEX_MODE=app-server") {
+		t.Fatalf("messages = %#v", notifier.messages)
+	}
+	if strings.Contains(notifier.messages[0], "handles /codex commands") {
+		t.Fatalf("messages = %#v", notifier.messages)
+	}
+}
+
 func TestCallbackCardActionResolvesApproval(t *testing.T) {
 	tasks := core.NewTaskManager()
 	task, err := tasks.Start("oc_1", "ou_1", "/tmp/demo", "fix bug", "", "")

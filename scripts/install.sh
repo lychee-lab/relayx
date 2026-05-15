@@ -3,9 +3,11 @@ set -Eeuo pipefail
 
 APP_NAME="relayx"
 DEFAULT_LISTEN_ADDR="127.0.0.1:8787"
+MIN_GO_VERSION="1.20"
 
 DRY_RUN=0
 SKIP_CODEX_INSTALL=0
+SELECTED_GO_CMD=""
 
 usage() {
   cat <<'EOF'
@@ -20,6 +22,7 @@ Environment overrides:
   RELAYX_HOME         RelayX config and runtime directory. Defaults to $HOME/.relayx.
   CONFIG_FILE         Config file path. Defaults to $RELAYX_HOME/config.toml.
   CODEX_INSTALL_CMD   Command used when codex is missing.
+  GO_CMD              Go command used for building. Defaults to autodetection.
 
 Default behavior:
   - If codex is not found, install it first.
@@ -132,14 +135,123 @@ install_codex_if_missing() {
 }
 
 require_build_tools() {
-  command -v go >/dev/null 2>&1 || fail "go is required to build $APP_NAME"
   command -v install >/dev/null 2>&1 || fail "install is required"
+  select_go_cmd
+}
+
+version_major_minor() {
+  local version="$1"
+  version="${version#go}"
+  version="${version%%[!0-9.]*}"
+
+  local major="${version%%.*}"
+  local rest="${version#*.}"
+  local minor="${rest%%.*}"
+
+  if [[ ! "$major" =~ ^[0-9]+$ ]] || [[ ! "$minor" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+
+  printf '%s %s\n' "$major" "$minor"
+}
+
+version_at_least() {
+  local have_major have_minor need_major need_minor
+  read -r have_major have_minor < <(version_major_minor "$1") || return 1
+  read -r need_major need_minor < <(version_major_minor "$2") || return 1
+
+  if [ "$have_major" -gt "$need_major" ]; then
+    return 0
+  fi
+
+  if [ "$have_major" -eq "$need_major" ] && [ "$have_minor" -ge "$need_minor" ]; then
+    return 0
+  fi
+
+  return 1
+}
+
+go_clean_env() {
+  env -u GOROOT "$@"
+}
+
+check_go_cmd() {
+  local cmd="$1"
+  local quiet="${2:-0}"
+
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    if [ "$quiet" -eq 1 ]; then
+      return 1
+    fi
+    fail "go is required to build $APP_NAME"
+  fi
+
+  local goversion gotooldir
+  if ! goversion="$(go_clean_env "$cmd" env GOVERSION 2>/dev/null)"; then
+    if [ "$quiet" -eq 1 ]; then
+      return 1
+    fi
+    fail "failed to inspect Go toolchain: $cmd"
+  fi
+
+  gotooldir="$(go_clean_env "$cmd" env GOTOOLDIR)"
+  if [ ! -x "$gotooldir/compile" ]; then
+    if [ "$quiet" -eq 1 ]; then
+      return 1
+    fi
+    fail "$cmd cannot find the Go compiler at $gotooldir/compile. Unset GOROOT or set GO_CMD to a valid Go toolchain."
+  fi
+
+  if ! version_at_least "$goversion" "$MIN_GO_VERSION"; then
+    if [ "$quiet" -eq 1 ]; then
+      return 1
+    fi
+    fail "$cmd is $goversion; $APP_NAME requires Go $MIN_GO_VERSION or newer"
+  fi
+
+  return 0
+}
+
+select_go_cmd() {
+  local candidates=()
+
+  if [ -n "${GO_CMD:-}" ]; then
+    candidates+=("$GO_CMD")
+  else
+    candidates+=("go")
+
+    if [ "$(uname -s)" = "Darwin" ]; then
+      [ -x /opt/homebrew/bin/go ] && candidates+=("/opt/homebrew/bin/go")
+      [ -x /usr/local/bin/go ] && candidates+=("/usr/local/bin/go")
+    fi
+  fi
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if check_go_cmd "$candidate" 1; then
+      SELECTED_GO_CMD="$candidate"
+      if [ -n "${GOROOT:-}" ]; then
+        log "ignoring GOROOT=$GOROOT for Go build"
+      fi
+      log "using go: $(command -v "$SELECTED_GO_CMD") ($(go_clean_env "$SELECTED_GO_CMD" env GOVERSION))"
+      return 0
+    fi
+  done
+
+  if [ -n "${GO_CMD:-}" ]; then
+    check_go_cmd "$GO_CMD" 0
+  fi
+
+  fail "no usable Go toolchain found. Install Go $MIN_GO_VERSION or newer, or set GO_CMD=/path/to/go."
 }
 
 build_app() {
   log "building $APP_NAME"
   run mkdir -p "$BUILD_DIR"
-  run go build -trimpath -o "$BUILD_BIN" ./cmd/relayx
+  local host_os host_arch
+  host_os="$(go_clean_env "$SELECTED_GO_CMD" env GOHOSTOS)"
+  host_arch="$(go_clean_env "$SELECTED_GO_CMD" env GOHOSTARCH)"
+  run env -u GOROOT GOOS="$host_os" GOARCH="$host_arch" "$SELECTED_GO_CMD" build -trimpath -o "$BUILD_BIN" ./cmd/relayx
 }
 
 install_app() {

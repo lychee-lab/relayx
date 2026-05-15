@@ -37,10 +37,24 @@ func sendMessageError(ctx context.Context, notifier app.Notifier, msg app.Inboun
 	}
 
 	text := fmt.Sprintf("RelayX error: %s", err)
-	if !strings.HasPrefix(strings.TrimSpace(msg.Text), "/codex") {
-		text = "RelayX only handles /codex commands. Send /codex help for usage."
+	if !isRelayXCommand(msg.Text) && core.IsUnsupportedCommand(err) {
+		text = "RelayX handles /codex commands and shortcuts such as /model, /fast, /review, and /resume. Send /codex help for usage."
 	}
 	if sendErr := notifier.SendMessage(ctx, msg.ChatID, text); sendErr != nil {
 		log.Printf("feishu send error message failed chat_id=%q: %v", msg.ChatID, sendErr)
+	}
+}
+
+func isRelayXCommand(text string) bool {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return false
+	}
+
+	switch fields[0] {
+	case "/codex", "/model", "/fast", "/review", "/resume":
+		return true
+	default:
+		return false
 	}
 }

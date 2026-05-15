@@ -36,6 +36,8 @@ func TestParseSteerCommand(t *testing.T) {
 func TestParseRejectsNonCodexCommand(t *testing.T) {
 	if _, err := ParseCommand("codex status"); err == nil {
 		t.Fatal("expected error")
+	} else if !IsUnsupportedCommand(err) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
